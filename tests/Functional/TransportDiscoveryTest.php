@@ -42,7 +42,7 @@ final class TransportDiscoveryTest extends TestCase
     {
         $names = array_map(static fn (TransportDefinition $transport): string => $transport->name, $this->registry()->all());
 
-        self::assertSame(['async', 'payments', 'failed', 'retry', 'env_dsn'], $names);
+        self::assertSame(['async', 'payments', 'failed', 'retry', 'env_dsn', 'fake', 'broken'], $names);
     }
 
     public function testOnlyTheConfiguredFailureTransportIsMarked(): void
@@ -85,7 +85,7 @@ final class TransportDiscoveryTest extends TestCase
     {
         $names = array_map(static fn (TransportDefinition $transport): string => $transport->name, $this->registry(['exclude' => ['retry']])->all());
 
-        self::assertSame(['async', 'payments', 'failed', 'env_dsn'], $names);
+        self::assertSame(['async', 'payments', 'failed', 'env_dsn', 'fake', 'broken'], $names);
     }
 
     public function testThresholdOnAnUnknownTransportFailsTheBoot(): void

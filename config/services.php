@@ -4,15 +4,21 @@ declare(strict_types=1);
 
 namespace Symfony\Component\DependencyInjection\Loader\Configurator;
 
+use Skukunin\MessengerStatsBundle\BundleVersion;
 use Skukunin\MessengerStatsBundle\Clock\Clock;
 use Skukunin\MessengerStatsBundle\Clock\SystemClock;
+use Skukunin\MessengerStatsBundle\Collector\CountOnlyStatsCollector;
 use Skukunin\MessengerStatsBundle\Collector\DoctrineTransportStatsCollector;
 use Skukunin\MessengerStatsBundle\Collector\EnvelopeDecoder;
 use Skukunin\MessengerStatsBundle\Collector\HeadersDecoder;
 use Skukunin\MessengerStatsBundle\Collector\MessageRowDecoder;
+use Skukunin\MessengerStatsBundle\Collector\StatsCollectorResolver;
 use Skukunin\MessengerStatsBundle\Collector\UtcDateTimeParser;
 use Skukunin\MessengerStatsBundle\Health\ThresholdEvaluator;
 use Skukunin\MessengerStatsBundle\Health\ThresholdSet;
+use Skukunin\MessengerStatsBundle\Report\ApplicationIdentity;
+use Skukunin\MessengerStatsBundle\Report\ApplicationIdentityFactory;
+use Skukunin\MessengerStatsBundle\Report\StatsReportBuilder;
 use Skukunin\MessengerStatsBundle\Transport\DoctrineDsnParser;
 use Skukunin\MessengerStatsBundle\Transport\TransportDefinitionRegistry;
 
@@ -67,5 +73,35 @@ return static function (ContainerConfigurator $container): void {
             '%messenger_stats.class_breakdown_sample_size%',
             '%messenger_stats.failures.limit%',
         ])
-        ->tag('messenger_stats.collector');
+        ->tag('messenger_stats.collector', ['priority' => 100]);
+
+    $services->set(CountOnlyStatsCollector::class)
+        ->args([abstract_arg('transport locator filled by the transport discovery pass')])
+        ->tag('messenger_stats.collector', ['priority' => -100]);
+
+    $services->set(StatsCollectorResolver::class)
+        ->args([tagged_iterator('messenger_stats.collector')]);
+
+    $services->set(BundleVersion::class);
+
+    $services->set(ApplicationIdentityFactory::class)
+        ->args([
+            '%messenger_stats.app_name%',
+            '%kernel.project_dir%',
+            '%kernel.environment%',
+        ]);
+
+    $services->set(ApplicationIdentity::class)
+        ->factory([service(ApplicationIdentityFactory::class), 'create']);
+
+    $services->set(StatsReportBuilder::class)
+        ->args([
+            service(TransportDefinitionRegistry::class),
+            service(StatsCollectorResolver::class),
+            service(ThresholdEvaluator::class),
+            service(Clock::class),
+            service(ApplicationIdentity::class),
+            service(BundleVersion::class),
+            service('logger')->nullOnInvalid(),
+        ]);
 };

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Skukunin\MessengerStatsBundle\Tests\Unit\DependencyInjection\Compiler;
 
 use PHPUnit\Framework\TestCase;
+use Skukunin\MessengerStatsBundle\Collector\CountOnlyStatsCollector;
 use Skukunin\MessengerStatsBundle\Collector\EnvelopeDecoder;
 use Skukunin\MessengerStatsBundle\DependencyInjection\Compiler\TransportDiscoveryPass;
 use Skukunin\MessengerStatsBundle\Exception\InvalidArgumentException;
@@ -78,15 +79,15 @@ final class TransportDiscoveryPassTest extends TestCase
         self::assertSame([
             'async' => 'messenger.default_serializer',
             'payments' => 'acme.json_serializer',
-        ], $this->locatedSerializerIds($container, $decoder));
+        ], $this->locatedIds($container, $decoder, '$serializers'));
     }
 
     /**
      * @return array<string, string>
      */
-    private function locatedSerializerIds(ContainerBuilder $container, Definition $decoder): array
+    private function locatedIds(ContainerBuilder $container, Definition $consumer, string $argument): array
     {
-        $locator = $decoder->getArgument('$serializers');
+        $locator = $consumer->getArgument($argument);
         self::assertInstanceOf(Reference::class, $locator);
 
         $map = $this->serviceLocatorPrototype($container, (string) $locator)->getArgument(0);
@@ -95,9 +96,9 @@ final class TransportDiscoveryPassTest extends TestCase
         $ids = [];
         foreach ($map as $name => $factory) {
             self::assertInstanceOf(ServiceClosureArgument::class, $factory);
-            $serializer = $factory->getValues()[0];
-            self::assertInstanceOf(Reference::class, $serializer);
-            $ids[(string) $name] = (string) $serializer;
+            $service = $factory->getValues()[0];
+            self::assertInstanceOf(Reference::class, $service);
+            $ids[(string) $name] = (string) $service;
         }
 
         return $ids;
@@ -119,7 +120,34 @@ final class TransportDiscoveryPassTest extends TestCase
 
         $this->process($container);
 
-        self::assertSame([], $this->locatedSerializerIds($container, $decoder));
+        self::assertSame([], $this->locatedIds($container, $decoder, '$serializers'));
+    }
+
+    public function testEveryDiscoveredTransportIsLocatableByTransportName(): void
+    {
+        $container = $this->container();
+        $this->addTransport($container, 'async', ['doctrine://default', []]);
+        $this->addTransport($container, 'events', ['amqp://localhost', []]);
+        $this->addTransport($container, 'memory', ['in-memory://', []]);
+        $collector = $container->setDefinition(CountOnlyStatsCollector::class, new Definition(CountOnlyStatsCollector::class));
+
+        $this->process($container);
+
+        self::assertSame([
+            'async' => 'messenger.transport.async',
+            'events' => 'messenger.transport.events',
+        ], $this->locatedIds($container, $collector, '$transports'));
+    }
+
+    public function testExcludedTransportsAreNotLocatable(): void
+    {
+        $container = $this->container(['retry']);
+        $this->addTransport($container, 'retry', ['amqp://localhost', []]);
+        $collector = $container->setDefinition(CountOnlyStatsCollector::class, new Definition(CountOnlyStatsCollector::class));
+
+        $this->process($container);
+
+        self::assertSame([], $this->locatedIds($container, $collector, '$transports'));
     }
 
     public function testSyncAndInMemoryTransportsAreSkipped(): void

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Skukunin\MessengerStatsBundle\DependencyInjection\Compiler;
 
+use Skukunin\MessengerStatsBundle\Collector\CountOnlyStatsCollector;
 use Skukunin\MessengerStatsBundle\Collector\EnvelopeDecoder;
 use Skukunin\MessengerStatsBundle\Exception\InvalidArgumentException;
 use Skukunin\MessengerStatsBundle\Transport\TransportKind;
@@ -34,6 +35,7 @@ final class TransportDiscoveryPass implements CompilerPassInterface
 
         $container->setParameter(self::TRANSPORTS_PARAMETER, $transports);
         $this->registerSerializerLocator($container, $transports);
+        $this->registerTransportLocator($container, $transports);
     }
 
     /**
@@ -180,5 +182,28 @@ final class TransportDiscoveryPass implements CompilerPassInterface
 
         $container->getDefinition(EnvelopeDecoder::class)
             ->setArgument('$serializers', ServiceLocatorTagPass::register($container, $serializers, EnvelopeDecoder::class));
+    }
+
+    /**
+     * @param array<string, array{dsn: string, options: array<string, mixed>, kind: string, is_failure_transport: bool, serializer: string}> $transports
+     */
+    private function registerTransportLocator(ContainerBuilder $container, array $transports): void
+    {
+        if (!$container->hasDefinition(CountOnlyStatsCollector::class)) {
+            return;
+        }
+
+        $services = [];
+        foreach ($container->findTaggedServiceIds(self::RECEIVER_TAG) as $id => $tags) {
+            foreach ($tags as $tag) {
+                $name = \is_array($tag) ? $tag['alias'] ?? null : null;
+                if (\is_string($name) && isset($transports[$name])) {
+                    $services[$name] = new Reference($id);
+                }
+            }
+        }
+
+        $container->getDefinition(CountOnlyStatsCollector::class)
+            ->setArgument('$transports', ServiceLocatorTagPass::register($container, $services, CountOnlyStatsCollector::class));
     }
 }

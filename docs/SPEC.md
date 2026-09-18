@@ -128,6 +128,14 @@ Rules:
   threshold is configured for that transport, otherwise `warning`, with
   metric `up`, value 0, threshold 1.
 - The report is built once per request/command and handed to a Report View.
+- A Stats Collector that throws makes only its own Transport Unavailable. The
+  Stats Report Builder reports the exception **class** in `error` and never
+  the exception message, which routinely embeds hostnames, ports and
+  credentials; the message is written to the `error` log channel together
+  with the transport name instead.
+- `app` is `messenger_stats.app_name` when configured, otherwise the basename
+  of `kernel.project_dir`; `env` is `kernel.environment`; `bundleVersion` is
+  the package version reported by `Composer\InstalledVersions`, or `dev`.
 
 ## 5. Doctrine collector queries
 
@@ -253,11 +261,23 @@ runtime when the container reads the parameter, not at compile time; a DSN
 that is entirely an env placeholder is stored with kind `unknown` and its
 kind is derived again from the resolved DSN by the runtime registry.
 
-The `kind` is the DSN scheme. A runtime `StatsCollectorResolver` returns the
-`DoctrineTransportStatsCollector` for kind `doctrine`, and the
-`CountOnlyStatsCollector` for any other transport whose service implements
-`MessageCountAwareInterface`. Transports that support neither are reported as
-`count` with `count: null`.
+The pass also registers a second service locator (again through
+`ServiceLocatorTagPass::register()`) mapping transport name => the
+`messenger.transport.<name>` service, and injects it into the
+`CountOnlyStatsCollector`. The locator is lazy, so no transport is
+instantiated until it is collected.
+
+The `kind` is the DSN scheme. A runtime `StatsCollectorResolver` walks the
+services tagged `messenger_stats.collector` in tag priority order and returns
+the first one whose `supports()` accepts the Transport: the
+`DoctrineTransportStatsCollector` (priority 100) for kind `doctrine`, the
+`CountOnlyStatsCollector` (priority -100) for every other kind. The
+count-only collector reports the transport service's `getMessageCount()` when
+that service implements `MessageCountAwareInterface`, and `count: null`
+otherwise — including when the transport service is not in the locator. A
+Transport no collector supports raises a `NoCollectorForTransportException`,
+which the Stats Report Builder turns into an Unavailable Transport like any
+other collection failure.
 
 ## 7. HTTP
 
@@ -393,6 +413,7 @@ exported as metrics.
 ```
 src/
   MessengerStatsBundle.php
+  BundleVersion.php                  # Composer\InstalledVersions, "dev" when not installed
   DependencyInjection/
     Configuration.php
     MessengerStatsExtension.php
@@ -406,7 +427,7 @@ src/
   Exception/
     MessengerStatsException.php      # marker interface
     InvalidArgumentException.php, UnknownTransportException.php,
-    UnsupportedTransportDsnException.php
+    UnsupportedTransportDsnException.php, NoCollectorForTransportException.php
   Collector/
     StatsCollector.php               # interface: supports(def), collect(def): TransportStats
     StatsCollectorResolver.php
@@ -419,6 +440,8 @@ src/
   Report/
     StatsReport.php, TransportStats.php, QueueStats.php, FailedMessage.php,
     Problem.php, HealthStatus.php (enum), DetailLevel.php (enum)
+    ApplicationIdentity.php          # app name and env of the host application
+    ApplicationIdentityFactory.php   # app_name ?: basename(kernel.project_dir)
     StatsReportBuilder.php           # registry + resolver + evaluator -> StatsReport
   Health/
     ThresholdSet.php, ThresholdEvaluator.php
@@ -445,7 +468,7 @@ Controllers call only `StatsReportBuilder` and a view.
 |---|---|---|
 | Unit | PHPUnit | DoctrineDsnParser, MessageRowDecoder with HeadersDecoder and EnvelopeDecoder, ThresholdEvaluator, HealthStatus derivation, three views, TableRenderer, TokenRequestListener (with mocked request) |
 | Integration | PHPUnit + SQLite in-memory + real `DoctrineTransport` | DoctrineTransportStatsCollector, run twice from one abstract case (`PhpSerializer` and `Serializer`): dispatch via transport, manipulate `delivered_at`/`available_at`, send to failure transport, assert counts/ages/breakdown/sampling/missing table, and a hand-written row whose class no longer exists |
-| Functional | PHPUnit + minimal `TestKernel` | TransportDiscoveryPass against a real `framework.messenger` config, routes, 404/401/403/200/503 behaviour, console command exit codes |
+| Functional | PHPUnit + minimal `TestKernel` | TransportDiscoveryPass against a real `framework.messenger` config, `StatsReportBuilder` over Doctrine transports plus a count-aware transport from a test transport factory and a transport on an unreachable connection, routes, 404/401/403/200/503 behaviour, console command exit codes |
 
 CI (GitHub Actions): `lowest` (PHP 8.1, Symfony 5.4, DBAL 2, `--prefer-lowest`),
 `highest` (latest PHP 8, Symfony 7, DBAL 4), plus `mysql` (highest + MySQL 8

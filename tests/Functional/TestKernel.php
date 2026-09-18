@@ -5,9 +5,13 @@ declare(strict_types=1);
 namespace Skukunin\MessengerStatsBundle\Tests\Functional;
 
 use Doctrine\Bundle\DoctrineBundle\DoctrineBundle;
+use Skukunin\MessengerStatsBundle\Collector\CountOnlyStatsCollector;
 use Skukunin\MessengerStatsBundle\Collector\DoctrineTransportStatsCollector;
+use Skukunin\MessengerStatsBundle\Collector\StatsCollectorResolver;
 use Skukunin\MessengerStatsBundle\MessengerStatsBundle;
+use Skukunin\MessengerStatsBundle\Report\StatsReportBuilder;
 use Skukunin\MessengerStatsBundle\Tests\Support\PublicServicesPass;
+use Skukunin\MessengerStatsBundle\Tests\Support\Transport\CountingTransportFactory;
 use Skukunin\MessengerStatsBundle\Transport\DoctrineDsnParser;
 use Skukunin\MessengerStatsBundle\Transport\TransportDefinitionRegistry;
 use Symfony\Bundle\FrameworkBundle\FrameworkBundle;
@@ -23,6 +27,7 @@ final class TestKernel extends Kernel
 
     public const ENV_TRANSPORT_DSN = 'TEST_TRANSPORT_DSN';
     public const JSON_SERIALIZER = 'messenger.transport.symfony_serializer';
+    public const BROKEN_CONNECTION = 'broken_connection';
 
     /**
      * @param array<string, mixed> $statsConfig
@@ -43,7 +48,17 @@ final class TestKernel extends Kernel
 
     protected function build(ContainerBuilder $container): void
     {
-        $container->addCompilerPass(new PublicServicesPass([TransportDefinitionRegistry::class, DoctrineDsnParser::class, DoctrineTransportStatsCollector::class, 'messenger.transport.async', 'messenger.transport.payments']));
+        $container->addCompilerPass(new PublicServicesPass([
+            TransportDefinitionRegistry::class,
+            DoctrineDsnParser::class,
+            DoctrineTransportStatsCollector::class,
+            CountOnlyStatsCollector::class,
+            StatsCollectorResolver::class,
+            StatsReportBuilder::class,
+            'messenger.transport.async',
+            'messenger.transport.payments',
+            'messenger.transport.fake',
+        ]));
     }
 
     protected function configureContainer(ContainerBuilder $container, LoaderInterface $loader): void
@@ -62,6 +77,8 @@ final class TestKernel extends Kernel
                     'failed' => 'doctrine://default?queue_name=failed',
                     'retry' => ['dsn' => 'doctrine://default', 'options' => ['queue_name' => 'retry', 'redeliver_timeout' => 60]],
                     'env_dsn' => '%env('.self::ENV_TRANSPORT_DSN.')%',
+                    'fake' => CountingTransportFactory::DSN,
+                    'broken' => 'doctrine://'.self::BROKEN_CONNECTION,
                     'sync' => 'sync://',
                     'memory' => 'in-memory://',
                 ],
@@ -69,8 +86,17 @@ final class TestKernel extends Kernel
         ]);
 
         $container->loadFromExtension('doctrine', [
-            'dbal' => ['url' => 'sqlite:///:memory:'],
+            'dbal' => [
+                'default_connection' => 'default',
+                'connections' => [
+                    'default' => ['url' => 'sqlite:///:memory:'],
+                    self::BROKEN_CONNECTION => ['driver' => 'pdo_sqlite', 'path' => '/messenger-stats-unreachable/broken.sqlite'],
+                ],
+            ],
         ]);
+
+        $container->register(CountingTransportFactory::class, CountingTransportFactory::class)
+            ->addTag('messenger.transport_factory');
 
         $container->loadFromExtension('messenger_stats', $this->statsConfig);
     }
