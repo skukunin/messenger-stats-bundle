@@ -423,10 +423,49 @@ Label values escape `\` as `\\`, `"` as `\"` and a newline as `\n`; `app` and
 
 `bin/console messenger:stats [--format=table|json]`
 
-- `table` (default): one table per transport; failure transport also prints
-  the failures table. Problems printed at the end.
-- `json`: the same document as `/stats`.
-- Exit code `0` for `ok`/`warning`, `1` for `critical`.
+The command builds one Stats Report and hands it to a Report View; it holds no
+rendering logic of its own. It is registered with the `console.command` tag
+carrying its `command` attribute, so the console never has to instantiate it
+to learn its name.
+
+- `json`: exactly the document of §7.2, encoded with `JSON_PRETTY_PRINT |
+  JSON_UNESCAPED_SLASHES` and terminated by a newline.
+- `table` (default): rendered by `Console/TableRenderer`, see §8.1.
+- Exit code `0` for `ok`/`warning`, `1` for `critical`, `2` with an error
+  message for an unknown `--format`.
+
+### 8.1 Table layout
+
+A header line, then one table for every Transport, then one failures table per
+Failure Transport that has Failed Messages, then the Problems:
+
+```
+App: <app>  Env: <env>  Generated: <RFC 3339, UTC>  Status: <status>
+```
+
+The Health Status is colored on a decorated output: `ok` green, `warning`
+yellow, `critical` red.
+
+The Transport table has the columns `Transport | Kind | Detail | Queue |
+Pending | Delayed | In progress | Stuck | Oldest pending (s) | Count`, and one
+row per Transport shape:
+
+| Detail Level | Rows |
+|---|---|
+| `full` | one row per Queue; the Transport name is written on the first Queue row only, `Count` repeats the Transport total on every row. A `full` Transport without a Queue is rendered like a `count` one |
+| `count` | one row, `-` in `Queue` and in the five state columns, the message count in `Count` |
+| `unavailable` | one row, `unavailable: <exception class>` in `Queue`, `-` in the five state columns, `Count` empty |
+
+`-` also stands for an absent Oldest Pending Age and for an unknown count.
+
+Each `full` Failure Transport carrying Failed Messages then gets the line
+`Failures on <transport>` and a table `Message class | Exception | Message |
+Failed at | Retries | Original transport`, dates RFC 3339 in UTC and every
+null or empty field as `-`.
+
+The report ends with the line `Problems` and a table `Level | Transport |
+Metric | Value | Threshold`, or with the line `No problems.` when the Stats
+Report holds none.
 
 ## 9. Architecture
 
@@ -473,7 +512,8 @@ src/
     TokenRequestListener.php
     NoStoreResponseFactory.php       # the responses of the three routes and of §7.1
   Console/
-    StatsCommand.php, TableRenderer.php
+    StatsCommand.php                 # messenger:stats, --format=table|json
+    TableRenderer.php                # the table rendering of §8.1
   Clock/
     Clock.php, SystemClock.php
 config/
@@ -490,7 +530,7 @@ no framework base class.
 
 | Layer | Tooling | Covers |
 |---|---|---|
-| Unit | PHPUnit | DoctrineDsnParser, MessageRowDecoder with HeadersDecoder and EnvelopeDecoder, ThresholdEvaluator, HealthStatus derivation, the four views, the three controllers, TableRenderer, TokenRequestListener (with mocked request) |
+| Unit | PHPUnit | DoctrineDsnParser, MessageRowDecoder with HeadersDecoder and EnvelopeDecoder, ThresholdEvaluator, HealthStatus derivation, the four views, the three controllers, TableRenderer, StatsCommand, TokenRequestListener (with mocked request) |
 | Integration | PHPUnit + SQLite in-memory + real `DoctrineTransport` | DoctrineTransportStatsCollector, run twice from one abstract case (`PhpSerializer` and `Serializer`): dispatch via transport, manipulate `delivered_at`/`available_at`, send to failure transport, assert counts/ages/breakdown/sampling/missing table, and a hand-written row whose class no longer exists |
 | Functional | PHPUnit + minimal `TestKernel` | TransportDiscoveryPass against a real `framework.messenger` config, `StatsReportBuilder` over Doctrine transports plus a count-aware transport from a test transport factory and a transport on an unreachable connection, routes, 404/401/403/200/503 behaviour, console command exit codes |
 

@@ -14,6 +14,8 @@ use Skukunin\MessengerStatsBundle\Collector\HeadersDecoder;
 use Skukunin\MessengerStatsBundle\Collector\MessageRowDecoder;
 use Skukunin\MessengerStatsBundle\Collector\StatsCollectorResolver;
 use Skukunin\MessengerStatsBundle\Collector\UtcDateTimeParser;
+use Skukunin\MessengerStatsBundle\Console\StatsCommand;
+use Skukunin\MessengerStatsBundle\Console\TableRenderer;
 use Skukunin\MessengerStatsBundle\Health\ThresholdEvaluator;
 use Skukunin\MessengerStatsBundle\Health\ThresholdSet;
 use Skukunin\MessengerStatsBundle\Http\HealthController;
@@ -150,6 +152,17 @@ return static function (ContainerConfigurator $container): void {
             service(NoStoreResponseFactory::class),
         ])
         ->tag('controller.service_arguments');
+
+    $services->set(TableRenderer::class);
+
+    $services->set(StatsCommand::class)
+        ->autoconfigure(false)
+        ->args([
+            service(StatsReportBuilder::class),
+            service(JsonReportView::class),
+            service(TableRenderer::class),
+        ])
+        ->tag('console.command', ['command' => StatsCommand::NAME]);
 
     $services->set(TokenRequestListener::class)
         ->args([
