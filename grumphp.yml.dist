@@ -1,0 +1,17 @@
+grumphp:
+    hide_circumvention_tip: true
+    tasks:
+        composer:
+            strict: true
+        phpcsfixer:
+            config: .php-cs-fixer.dist.php
+            allow_risky: true
+        phpstan:
+            configuration: phpstan.neon.dist
+            use_grumphp_paths: false
+        phpunit:
+            config_file: phpunit.xml.dist
+            testsuite: unit
+    testsuites:
+        git_pre_commit:
+            tasks: [composer, phpcsfixer, phpstan, phpunit]

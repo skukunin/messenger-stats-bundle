@@ -26,6 +26,7 @@
     "require-dev": {
         "doctrine/doctrine-bundle": "^2.7",
         "friendsofphp/php-cs-fixer": "^3.40",
+        "phpro/grumphp": "^2.23",
         "phpstan/phpstan": "^1.12 || ^2.0",
         "phpstan/phpstan-phpunit": "^1.4 || ^2.0",
         "phpstan/phpstan-symfony": "^1.4 || ^2.0",
@@ -54,7 +55,10 @@
         }
     },
     "config": {
-        "sort-packages": true
+        "sort-packages": true,
+        "allow-plugins": {
+            "phpro/grumphp": true
+        }
     },
     "minimum-stability": "stable",
     "prefer-stable": true
