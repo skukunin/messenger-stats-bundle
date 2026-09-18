@@ -14,7 +14,10 @@ use Doctrine\DBAL\Types\Types;
 use Doctrine\Persistence\ConnectionRegistry;
 use PHPUnit\Framework\TestCase;
 use Skukunin\MessengerStatsBundle\Collector\DoctrineTransportStatsCollector;
-use Skukunin\MessengerStatsBundle\Collector\FailedMessageHeadersDecoder;
+use Skukunin\MessengerStatsBundle\Collector\EnvelopeDecoder;
+use Skukunin\MessengerStatsBundle\Collector\HeadersDecoder;
+use Skukunin\MessengerStatsBundle\Collector\MessageRowDecoder;
+use Skukunin\MessengerStatsBundle\Collector\UtcDateTimeParser;
 use Skukunin\MessengerStatsBundle\Report\DetailLevel;
 use Skukunin\MessengerStatsBundle\Report\QueueStats;
 use Skukunin\MessengerStatsBundle\Report\TransportStats;
@@ -24,6 +27,7 @@ use Skukunin\MessengerStatsBundle\Tests\Support\Message\SendInvoice;
 use Skukunin\MessengerStatsBundle\Transport\DoctrineDsnParser;
 use Skukunin\MessengerStatsBundle\Transport\TransportDefinition;
 use Skukunin\MessengerStatsBundle\Transport\TransportKind;
+use Symfony\Component\DependencyInjection\ServiceLocator;
 use Symfony\Component\Messenger\Bridge\Doctrine\Transport\Connection as MessengerConnection;
 use Symfony\Component\Messenger\Bridge\Doctrine\Transport\DoctrineTransport;
 use Symfony\Component\Messenger\Envelope;
@@ -33,20 +37,14 @@ use Symfony\Component\Messenger\Stamp\RedeliveryStamp;
 use Symfony\Component\Messenger\Stamp\SentToFailureTransportStamp;
 use Symfony\Component\Messenger\Stamp\StampInterface;
 use Symfony\Component\Messenger\Stamp\TransportMessageIdStamp;
-use Symfony\Component\Messenger\Transport\Serialization\PhpSerializer;
-use Symfony\Component\Messenger\Transport\Serialization\Serializer;
 use Symfony\Component\Messenger\Transport\Serialization\SerializerInterface;
-use Symfony\Component\Serializer\Encoder\JsonEncoder;
-use Symfony\Component\Serializer\Normalizer\ArrayDenormalizer;
-use Symfony\Component\Serializer\Normalizer\DateTimeNormalizer;
-use Symfony\Component\Serializer\Normalizer\ObjectNormalizer;
-use Symfony\Component\Serializer\Serializer as SymfonySerializer;
 
-final class DoctrineTransportStatsCollectorTest extends TestCase
+abstract class DoctrineTransportStatsCollectorTestCase extends TestCase
 {
-    private const TABLE = 'messenger_messages';
+    protected const TABLE = 'messenger_messages';
+    protected const TRANSPORT = 'async';
 
-    private DbalConnection $database;
+    protected DbalConnection $database;
 
     private DateTimeImmutable $now;
 
@@ -77,7 +75,7 @@ final class DoctrineTransportStatsCollectorTest extends TestCase
         self::assertFalse($this->collector()->supports($this->definition('amqp://guest@localhost/%2f/messages')));
     }
 
-    private function collector(?int $stuckAfterSeconds = 300, int $sampleSize = 1000, int $failuresLimit = 10, bool $exposeMessage = true): DoctrineTransportStatsCollector
+    protected function collector(?int $stuckAfterSeconds = 300, int $sampleSize = 1000, int $failuresLimit = 10, bool $exposeMessage = true): DoctrineTransportStatsCollector
     {
         $connections = $this->createMock(ConnectionRegistry::class);
         $connections->method('getConnection')->willReturn($this->database);
@@ -85,7 +83,7 @@ final class DoctrineTransportStatsCollectorTest extends TestCase
         return new DoctrineTransportStatsCollector(
             $connections,
             new DoctrineDsnParser(),
-            new FailedMessageHeadersDecoder($exposeMessage),
+            $this->rowDecoder($exposeMessage),
             new FixedClock($this->now),
             $stuckAfterSeconds,
             $sampleSize,
@@ -93,9 +91,19 @@ final class DoctrineTransportStatsCollectorTest extends TestCase
         );
     }
 
-    private function definition(string $dsn = 'doctrine://default', bool $isFailureTransport = false): TransportDefinition
+    private function rowDecoder(bool $exposeMessage): MessageRowDecoder
     {
-        return new TransportDefinition('async', $dsn, TransportKind::fromDsn($dsn), [], $isFailureTransport);
+        $dateTimes = new UtcDateTimeParser();
+        $serializers = new ServiceLocator([self::TRANSPORT => fn (): SerializerInterface => $this->serializer()]);
+
+        return new MessageRowDecoder(new HeadersDecoder($dateTimes, $exposeMessage), new EnvelopeDecoder($serializers, $dateTimes, $exposeMessage));
+    }
+
+    abstract protected function serializer(): SerializerInterface;
+
+    protected function definition(string $dsn = 'doctrine://default', bool $isFailureTransport = false): TransportDefinition
+    {
+        return new TransportDefinition(self::TRANSPORT, $dsn, TransportKind::fromDsn($dsn), [], $isFailureTransport, 'messenger.default_serializer');
     }
 
     public function testAnEmptyTransportIsReportedWithZeroes(): void
@@ -105,14 +113,14 @@ final class DoctrineTransportStatsCollectorTest extends TestCase
         $stats = $this->collector()->collect($this->definition());
 
         self::assertSame(DetailLevel::Full, $stats->detailLevel);
-        self::assertSame('async', $stats->name);
+        self::assertSame(self::TRANSPORT, $stats->name);
         self::assertSame(TransportKind::DOCTRINE, $stats->kind);
         self::assertSame(0, $stats->count);
         self::assertSame([], $stats->failures);
         $this->assertZeroQueue($this->onlyQueue($stats), 'default');
     }
 
-    private function transport(string $queueName = 'default', ?SerializerInterface $serializer = null): DoctrineTransport
+    protected function transport(string $queueName = 'default'): DoctrineTransport
     {
         $connection = new MessengerConnection(
             ['table_name' => self::TABLE, 'queue_name' => $queueName, 'auto_setup' => true],
@@ -120,14 +128,7 @@ final class DoctrineTransportStatsCollectorTest extends TestCase
         );
         $connection->setup();
 
-        return new DoctrineTransport($connection, $serializer ?? self::serializer());
-    }
-
-    private static function serializer(): SerializerInterface
-    {
-        $normalizers = [new DateTimeNormalizer(), new ArrayDenormalizer(), new ObjectNormalizer()];
-
-        return new Serializer(new SymfonySerializer($normalizers, [new JsonEncoder()]));
+        return new DoctrineTransport($connection, $this->serializer());
     }
 
     private function assertZeroQueue(QueueStats $queue, string $name): void
@@ -142,7 +143,7 @@ final class DoctrineTransportStatsCollectorTest extends TestCase
         self::assertFalse($queue->classBreakdownSampled);
     }
 
-    private function onlyQueue(TransportStats $stats): QueueStats
+    protected function onlyQueue(TransportStats $stats): QueueStats
     {
         self::assertCount(1, $stats->queues);
 
@@ -164,7 +165,7 @@ final class DoctrineTransportStatsCollectorTest extends TestCase
         self::assertSame(0, $queue->stuck);
     }
 
-    private function send(DoctrineTransport $transport, object $message, StampInterface ...$stamps): int
+    protected function send(DoctrineTransport $transport, object $message, StampInterface ...$stamps): int
     {
         $stamp = $transport->send(new Envelope($message, $stamps))->last(TransportMessageIdStamp::class);
         self::assertInstanceOf(TransportMessageIdStamp::class, $stamp);
@@ -292,13 +293,42 @@ final class DoctrineTransportStatsCollectorTest extends TestCase
         self::assertTrue($queue->classBreakdownSampled);
     }
 
-    public function testMessagesSerializedWithoutHeadersAreReportedAsUnknown(): void
+    public function testAMessageWhoseClassNoLongerExistsIsReportedAsUnknown(): void
     {
-        $this->send($this->transport('default', new PhpSerializer()), new SendInvoice());
+        $this->transport();
+        $this->insertMessageOfAMissingClass();
 
-        $queue = $this->onlyQueue($this->collector()->collect($this->definition()));
+        $stats = $this->collector()->collect($this->definition(isFailureTransport: true));
 
-        self::assertSame([FailedMessageHeadersDecoder::UNKNOWN_MESSAGE_CLASS => 1], $queue->classBreakdown);
+        self::assertSame([MessageRowDecoder::UNKNOWN_MESSAGE_CLASS => 1], $this->onlyQueue($stats)->classBreakdown);
+        self::assertCount(1, $stats->failures);
+        self::assertSame(MessageRowDecoder::UNKNOWN_MESSAGE_CLASS, $stats->failures[0]->messageClass);
+        self::assertNull($stats->failures[0]->exceptionClass);
+        self::assertNull($stats->failures[0]->exceptionMessage);
+        self::assertNull($stats->failures[0]->originalTransport);
+        self::assertSame(0, $stats->failures[0]->retryCount);
+        self::assertNotNull($stats->failures[0]->failedAt);
+    }
+
+    private function insertMessageOfAMissingClass(): void
+    {
+        $this->database->executeStatement(
+            'INSERT INTO '.$this->database->quoteIdentifier(self::TABLE).' (body, headers, queue_name, created_at, available_at) VALUES (?, ?, ?, ?, ?)',
+            [$this->bodyOfAMissingClass(), '[]', 'default', $this->secondsAgo(60), $this->secondsAgo(60)],
+            [Types::STRING, Types::STRING, Types::STRING, Types::DATETIME_IMMUTABLE, Types::DATETIME_IMMUTABLE],
+        );
+    }
+
+    private function bodyOfAMissingClass(): string
+    {
+        $serialized = serialize(new Envelope(new SendInvoice()));
+        $missing = 'Vendor\\Missing\\Message';
+
+        return addslashes(str_replace(
+            \sprintf('O:%d:"%s"', \strlen(SendInvoice::class), SendInvoice::class),
+            \sprintf('O:%d:"%s"', \strlen($missing), $missing),
+            $serialized,
+        ));
     }
 
     public function testOtherQueuesOfTheSameTableAreNotCounted(): void

@@ -4,26 +4,22 @@ declare(strict_types=1);
 
 namespace Skukunin\MessengerStatsBundle\Collector;
 
-use DateTimeImmutable;
-use DateTimeZone;
-use Exception;
 use Skukunin\MessengerStatsBundle\Report\FailedMessage;
 use Symfony\Component\Messenger\Stamp\ErrorDetailsStamp;
 use Symfony\Component\Messenger\Stamp\RedeliveryStamp;
 use Symfony\Component\Messenger\Stamp\SentToFailureTransportStamp;
 
-final class FailedMessageHeadersDecoder
+final class HeadersDecoder
 {
     public const ERROR_DETAILS_HEADER = self::STAMP_HEADER_PREFIX.ErrorDetailsStamp::class;
     public const REDELIVERY_HEADER = self::STAMP_HEADER_PREFIX.RedeliveryStamp::class;
     public const SENT_TO_FAILURE_HEADER = self::STAMP_HEADER_PREFIX.SentToFailureTransportStamp::class;
 
-    public const UNKNOWN_MESSAGE_CLASS = 'unknown';
-
     private const STAMP_HEADER_PREFIX = 'X-Message-Stamp-';
     private const TYPE_HEADER = 'type';
 
     public function __construct(
+        private readonly UtcDateTimeParser $dateTimes,
         private readonly bool $exposeMessage,
     ) {
     }
@@ -36,10 +32,10 @@ final class FailedMessageHeadersDecoder
         $sentToFailure = $this->lastStampOf($headers, self::SENT_TO_FAILURE_HEADER);
 
         return new FailedMessage(
-            $this->messageClassOf($headers) ?? self::UNKNOWN_MESSAGE_CLASS,
+            $this->messageClassOf($headers) ?? MessageRowDecoder::UNKNOWN_MESSAGE_CLASS,
             $this->stringField($errorDetails, 'exceptionClass'),
             $this->exposeMessage ? $this->stringField($errorDetails, 'exceptionMessage') : null,
-            $this->dateTimeOf($this->stringField($redelivery, 'redeliveredAt') ?? $createdAt),
+            $this->dateTimes->parse($this->stringField($redelivery, 'redeliveredAt') ?? $createdAt),
             $this->intField($redelivery, 'retryCount'),
             $this->stringField($sentToFailure, 'originalReceiverName'),
         );
@@ -110,15 +106,6 @@ final class FailedMessageHeadersDecoder
         $value = $stamp[$name] ?? null;
 
         return \is_string($value) && '' !== $value ? $value : null;
-    }
-
-    private function dateTimeOf(string $value): ?DateTimeImmutable
-    {
-        try {
-            return new DateTimeImmutable($value, new DateTimeZone('UTC'));
-        } catch (Exception) {
-            return null;
-        }
     }
 
     /**

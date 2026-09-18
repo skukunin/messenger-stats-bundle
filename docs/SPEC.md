@@ -21,6 +21,7 @@ monitor application, Flex recipe.
 | doctrine/dbal | ^2.13 \|\| ^3.0 \|\| ^4.0 |
 | doctrine/persistence | ^2.2 \|\| ^3.0 \|\| ^4.0 (the `ConnectionRegistry` the Doctrine collector resolves connections through) |
 | symfony/doctrine-messenger | ^5.4 \|\| ^6.4 \|\| ^7.0 (required; Doctrine is the only full-detail collector) |
+| psr/container | ^1.1 \|\| ^2.0 (the serializer locator the message row decoder reads) |
 | psr/log | ^1 \|\| ^2 \|\| ^3 |
 
 No runtime dependency on `symfony/security-bundle`, `symfony/yaml`,
@@ -145,8 +146,15 @@ of rejected:
 | In Progress | `COUNT(*) WHERE queue_name = ? AND delivered_at IS NOT NULL AND delivered_at > now - stuck_after` |
 | Stuck | `COUNT(*) WHERE queue_name = ? AND delivered_at IS NOT NULL AND delivered_at <= now - stuck_after` |
 | Oldest Pending Age | `now - MIN(available_at)` over Pending rows |
-| Class Breakdown | `SELECT headers FROM ... WHERE queue_name = ? ORDER BY id DESC LIMIT sample_size`; decode JSON, read `type`; `sampled = (rows fetched == sample_size AND total count > sample_size)` |
-| Failures | `SELECT headers, created_at FROM ... WHERE queue_name = ? ORDER BY id DESC LIMIT failures.limit` on the Failure Transport |
+| Class Breakdown | `SELECT body, headers FROM ... WHERE queue_name = ? ORDER BY id DESC LIMIT sample_size`; decode each row (see below); `sampled = (rows fetched == sample_size AND total count > sample_size)` |
+| Failures | `SELECT body, headers, created_at FROM ... WHERE queue_name = ? ORDER BY id DESC LIMIT failures.limit` on the Failure Transport |
+
+A row is decoded by the Message Row Decoder, which is a hybrid: when the
+`headers` column carries a non-empty `type` header the row is read from the
+headers alone, otherwise the row is decoded through the transport's own
+serializer. Both paths honour `failures.expose_message`.
+
+### 5.1 Header path
 
 The `headers` column holds a JSON object written by the transport's
 serializer. Messenger's `Serializer` writes `type` (the message FQCN), one
@@ -159,7 +167,7 @@ are the stamps' own property names and have been stable since 5.4, where the
 
 | Header | Fields read |
 |---|---|
-| `type` | the message class; absent or empty ⇒ `unknown` |
+| `type` | the message class; absent or empty ⇒ the envelope path decides |
 | `X-Message-Stamp-Symfony\Component\Messenger\Stamp\ErrorDetailsStamp` | `exceptionClass`, `exceptionMessage` (also carries `exceptionCode`, `flattenException`) |
 | `X-Message-Stamp-Symfony\Component\Messenger\Stamp\RedeliveryStamp` | `retryCount` (default 0), `redeliveredAt` (RFC 3339) used as Failed At |
 | `X-Message-Stamp-Symfony\Component\Messenger\Stamp\SentToFailureTransportStamp` | `originalReceiverName` |
@@ -168,11 +176,32 @@ Missing headers, invalid JSON, stamps that are not objects and fields of the
 wrong type yield nulls (retry count 0), never an error. `redeliveredAt`
 absent ⇒ Failed At falls back to the row's `created_at`.
 
+### 5.2 Envelope path
+
 Messenger's **default** serializer is `PhpSerializer`, which emits no headers
-at all: `DoctrineSender` then stores `[]` in the column. For such a transport
-the Class Breakdown is a single `unknown` bucket and every Failed Message
-field except the count is null. Reading the message class out of the
-serialized body is out of scope for v1.
+at all: `DoctrineSender` then stores `[]` in the column, and the message class
+and every stamp live PHP-serialized inside `body`. Such a row is handed to the
+transport's own serializer as `['body' => …, 'headers' => …]`, the way
+`messenger:failed:show` reads it; the headers are the JSON object of the
+column reduced to its string values, and an unusable column yields `[]`. The
+resulting `Envelope` gives the message class and, through
+`Envelope::last()`, the same three stamps as the header path:
+`ErrorDetailsStamp` (`getExceptionClass()`, `getExceptionMessage()`),
+`RedeliveryStamp` (`getRetryCount()`, `getRedeliveredAt()` used as Failed At)
+and `SentToFailureTransportStamp` (`getOriginalReceiverName()`). Empty stamp
+strings are reported as null, and a missing `RedeliveryStamp` falls back to
+the row's `created_at`.
+
+Any `\Throwable` raised while decoding — a `MessageDecodingFailedException`, a
+message class that no longer exists, a transport with no serializer in the
+locator — is swallowed: the message class is `unknown`, every failure detail
+is null and the retry count is 0. Nothing propagates to the Stats Report.
+
+The envelope path unserializes the row, so a Class Breakdown over a
+`PhpSerializer` transport runs the messages' `__wakeup()` / `__unserialize()`
+up to `class_breakdown_sample_size` times per report. Reading only the class
+through `MessageTypeAwareSerializerInterface::getMessageType()` (Messenger
+7.4+) would avoid that and is left for a later version.
 
 All date comparisons are done with PHP-computed timestamps bound as
 `Types::DATETIME_IMMUTABLE` parameters, not database date functions, so the
@@ -197,11 +226,22 @@ A Doctrine transport definition addresses exactly one `queue_name`, so its
 
 A compiler pass reads every definition tagged `messenger.receiver`, takes the
 tag's `alias` as the transport name, and the factory arguments `$dsn` and
-`$options`. Results are stored in the parameter `messenger_stats.transports`:
+`$options`. It also captures the transport's serializer: the factory argument
+`$serializer` (positional index 2 or the named `$serializer`) is a `Reference`
+to either `messenger.default_serializer` or the per-transport `serializer`
+option; its **service id** is stored, and `messenger.default_serializer` is
+assumed when the argument is absent. Results are stored in the parameter
+`messenger_stats.transports`:
 
 ```
-[name => ['dsn' => string, 'options' => array, 'kind' => string, 'is_failure_transport' => bool]]
+[name => ['dsn' => string, 'options' => array, 'kind' => string, 'is_failure_transport' => bool, 'serializer' => string]]
 ```
+
+The pass additionally registers a service locator (through
+`ServiceLocatorTagPass::register()`) mapping transport name => serializer
+service, and injects it into the Envelope Decoder. Only ids the container
+knows enter the locator, and the locator's references are what keep the
+serializer services from being removed as unused.
 
 Transports with scheme `sync` or `in-memory`, and names listed in `exclude`,
 are dropped. The Failure Transport is read from the `is_failure_transport`
@@ -358,7 +398,7 @@ src/
     MessengerStatsExtension.php
     Compiler/TransportDiscoveryPass.php
   Transport/
-    TransportDefinition.php          # name, dsn, kind, options, isFailureTransport
+    TransportDefinition.php          # name, dsn, kind, options, isFailureTransport, serializerServiceId
     TransportDefinitionRegistry.php  # built from the parameter at runtime
     TransportKind.php                # DSN scheme constants and derivation
     DoctrineDsnParser.php
@@ -372,7 +412,10 @@ src/
     StatsCollectorResolver.php
     DoctrineTransportStatsCollector.php
     CountOnlyStatsCollector.php
-    FailedMessageHeadersDecoder.php
+    MessageRowDecoder.php            # hybrid: headers when they carry the type, else the envelope
+    HeadersDecoder.php
+    EnvelopeDecoder.php              # decodes through the transport's own serializer
+    UtcDateTimeParser.php
   Report/
     StatsReport.php, TransportStats.php, QueueStats.php, FailedMessage.php,
     Problem.php, HealthStatus.php (enum), DetailLevel.php (enum)
@@ -400,8 +443,8 @@ Controllers call only `StatsReportBuilder` and a view.
 
 | Layer | Tooling | Covers |
 |---|---|---|
-| Unit | PHPUnit | DoctrineDsnParser, FailedMessageHeadersDecoder, ThresholdEvaluator, HealthStatus derivation, three views, TableRenderer, TokenRequestListener (with mocked request) |
-| Integration | PHPUnit + SQLite in-memory + real `DoctrineTransport` | DoctrineTransportStatsCollector: dispatch via transport, manipulate `delivered_at`/`available_at`, send to failure transport, assert counts/ages/breakdown/sampling/missing table |
+| Unit | PHPUnit | DoctrineDsnParser, MessageRowDecoder with HeadersDecoder and EnvelopeDecoder, ThresholdEvaluator, HealthStatus derivation, three views, TableRenderer, TokenRequestListener (with mocked request) |
+| Integration | PHPUnit + SQLite in-memory + real `DoctrineTransport` | DoctrineTransportStatsCollector, run twice from one abstract case (`PhpSerializer` and `Serializer`): dispatch via transport, manipulate `delivered_at`/`available_at`, send to failure transport, assert counts/ages/breakdown/sampling/missing table, and a hand-written row whose class no longer exists |
 | Functional | PHPUnit + minimal `TestKernel` | TransportDiscoveryPass against a real `framework.messenger` config, routes, 404/401/403/200/503 behaviour, console command exit codes |
 
 CI (GitHub Actions): `lowest` (PHP 8.1, Symfony 5.4, DBAL 2, `--prefer-lowest`),
@@ -414,7 +457,7 @@ service running the integration suite). PHPStan level max and php-cs-fixer
 1. Skeleton: composer.json, bundle class, extension, configuration, CI, tooling.
 2. Report model, Clock, ThresholdEvaluator (unit).
 3. DoctrineDsnParser, TransportDiscoveryPass, registry (unit + functional).
-4. DoctrineTransportStatsCollector, FailedMessageHeadersDecoder (integration).
+4. DoctrineTransportStatsCollector, MessageRowDecoder (integration, under both serializers).
 5. CountOnlyStatsCollector, resolver, StatsReportBuilder, unavailable handling.
 6. Views + controllers + token listener (unit + functional).
 7. Console command.

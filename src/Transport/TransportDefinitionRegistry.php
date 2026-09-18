@@ -9,7 +9,7 @@ use Skukunin\MessengerStatsBundle\Exception\UnknownTransportException;
 final class TransportDefinitionRegistry
 {
     /**
-     * @param array<string, array{dsn: string, options: array<string, mixed>, kind: string, is_failure_transport: bool}> $transports
+     * @param array<string, array{dsn: string, options: array<string, mixed>, kind: string, is_failure_transport: bool, serializer: string}> $transports
      */
     public function __construct(
         private readonly array $transports,
@@ -39,6 +39,7 @@ final class TransportDefinitionRegistry
             $this->kindOf($transport['kind'], $transport['dsn']),
             $transport['options'],
             $transport['is_failure_transport'],
+            $transport['serializer'],
         );
     }
 

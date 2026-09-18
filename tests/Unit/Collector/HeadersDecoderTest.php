@@ -5,10 +5,11 @@ declare(strict_types=1);
 namespace Skukunin\MessengerStatsBundle\Tests\Unit\Collector;
 
 use PHPUnit\Framework\TestCase;
-use Skukunin\MessengerStatsBundle\Collector\FailedMessageHeadersDecoder;
+use Skukunin\MessengerStatsBundle\Collector\HeadersDecoder;
+use Skukunin\MessengerStatsBundle\Collector\UtcDateTimeParser;
 use Skukunin\MessengerStatsBundle\Report\FailedMessage;
 
-final class FailedMessageHeadersDecoderTest extends TestCase
+final class HeadersDecoderTest extends TestCase
 {
     private const CREATED_AT = '2026-09-18 08:00:00';
 
@@ -31,9 +32,9 @@ final class FailedMessageHeadersDecoderTest extends TestCase
         return $json;
     }
 
-    private function decoder(bool $exposeMessage = true): FailedMessageHeadersDecoder
+    private function decoder(bool $exposeMessage = true): HeadersDecoder
     {
-        return new FailedMessageHeadersDecoder($exposeMessage);
+        return new HeadersDecoder(new UtcDateTimeParser(), $exposeMessage);
     }
 
     private function decode(string $headers, bool $exposeMessage = true, string $createdAt = self::CREATED_AT): FailedMessage
@@ -78,7 +79,7 @@ final class FailedMessageHeadersDecoderTest extends TestCase
     {
         $message = $this->decode($this->headers([
             'type' => 'Acme\\Message\\SendInvoice',
-            FailedMessageHeadersDecoder::ERROR_DETAILS_HEADER => '[{"exceptionClass":"Acme\\\\PaymentFailed","exceptionCode":7,"exceptionMessage":"Connection refused","flattenException":null}]',
+            HeadersDecoder::ERROR_DETAILS_HEADER => '[{"exceptionClass":"Acme\\\\PaymentFailed","exceptionCode":7,"exceptionMessage":"Connection refused","flattenException":null}]',
         ]));
 
         self::assertSame('Acme\\PaymentFailed', $message->exceptionClass);
@@ -88,7 +89,7 @@ final class FailedMessageHeadersDecoderTest extends TestCase
     public function testTheLastErrorDetailsStampWins(): void
     {
         $message = $this->decode($this->headers([
-            FailedMessageHeadersDecoder::ERROR_DETAILS_HEADER => '[{"exceptionClass":"Acme\\\\First","exceptionMessage":"first"},{"exceptionClass":"Acme\\\\Last","exceptionMessage":"last"}]',
+            HeadersDecoder::ERROR_DETAILS_HEADER => '[{"exceptionClass":"Acme\\\\First","exceptionMessage":"first"},{"exceptionClass":"Acme\\\\Last","exceptionMessage":"last"}]',
         ]));
 
         self::assertSame('Acme\\Last', $message->exceptionClass);
@@ -98,7 +99,7 @@ final class FailedMessageHeadersDecoderTest extends TestCase
     public function testExceptionMessageIsHiddenWhenItIsNotExposed(): void
     {
         $headers = $this->headers([
-            FailedMessageHeadersDecoder::ERROR_DETAILS_HEADER => '[{"exceptionClass":"Acme\\\\PaymentFailed","exceptionMessage":"Connection refused"}]',
+            HeadersDecoder::ERROR_DETAILS_HEADER => '[{"exceptionClass":"Acme\\\\PaymentFailed","exceptionMessage":"Connection refused"}]',
         ]);
 
         $message = $this->decode($headers, false);
@@ -110,7 +111,7 @@ final class FailedMessageHeadersDecoderTest extends TestCase
     public function testRetryCountAndFailedAtComeFromTheLastRedeliveryStamp(): void
     {
         $message = $this->decode($this->headers([
-            FailedMessageHeadersDecoder::REDELIVERY_HEADER => '[{"retryCount":1,"redeliveredAt":"2026-01-01T10:00:00+00:00"},{"retryCount":3,"redeliveredAt":"2026-01-02T11:22:33+00:00"}]',
+            HeadersDecoder::REDELIVERY_HEADER => '[{"retryCount":1,"redeliveredAt":"2026-01-01T10:00:00+00:00"},{"retryCount":3,"redeliveredAt":"2026-01-02T11:22:33+00:00"}]',
         ]));
 
         self::assertSame(3, $message->retryCount);
@@ -138,14 +139,14 @@ final class FailedMessageHeadersDecoderTest extends TestCase
     {
         self::assertNull($this->decode($this->headers([]), true, 'not a date')->failedAt);
         self::assertNull($this->decode($this->headers([
-            FailedMessageHeadersDecoder::REDELIVERY_HEADER => '[{"retryCount":2,"redeliveredAt":"whenever"}]',
+            HeadersDecoder::REDELIVERY_HEADER => '[{"retryCount":2,"redeliveredAt":"whenever"}]',
         ]), true, 'not a date')->failedAt);
     }
 
     public function testRetryCountSurvivesAStampWithoutARedeliveryTime(): void
     {
         $message = $this->decode($this->headers([
-            FailedMessageHeadersDecoder::REDELIVERY_HEADER => '[{"retryCount":2}]',
+            HeadersDecoder::REDELIVERY_HEADER => '[{"retryCount":2}]',
         ]));
 
         self::assertSame(2, $message->retryCount);
@@ -156,7 +157,7 @@ final class FailedMessageHeadersDecoderTest extends TestCase
     public function testOriginalTransportComesFromTheLastSentToFailureTransportStamp(): void
     {
         $message = $this->decode($this->headers([
-            FailedMessageHeadersDecoder::SENT_TO_FAILURE_HEADER => '[{"originalReceiverName":"first"},{"originalReceiverName":"async"}]',
+            HeadersDecoder::SENT_TO_FAILURE_HEADER => '[{"originalReceiverName":"first"},{"originalReceiverName":"async"}]',
         ]));
 
         self::assertSame('async', $message->originalTransport);
@@ -165,9 +166,9 @@ final class FailedMessageHeadersDecoderTest extends TestCase
     public function testStampHeadersThatAreNotJsonAreIgnored(): void
     {
         $message = $this->decode($this->headers([
-            FailedMessageHeadersDecoder::ERROR_DETAILS_HEADER => '{not json',
-            FailedMessageHeadersDecoder::REDELIVERY_HEADER => '{not json',
-            FailedMessageHeadersDecoder::SENT_TO_FAILURE_HEADER => '{not json',
+            HeadersDecoder::ERROR_DETAILS_HEADER => '{not json',
+            HeadersDecoder::REDELIVERY_HEADER => '{not json',
+            HeadersDecoder::SENT_TO_FAILURE_HEADER => '{not json',
         ]));
 
         self::assertNull($message->exceptionClass);
@@ -178,9 +179,9 @@ final class FailedMessageHeadersDecoderTest extends TestCase
     public function testStampHeadersThatAreNotListsOfObjectsAreIgnored(): void
     {
         $message = $this->decode($this->headers([
-            FailedMessageHeadersDecoder::ERROR_DETAILS_HEADER => '"just a string"',
-            FailedMessageHeadersDecoder::REDELIVERY_HEADER => '[]',
-            FailedMessageHeadersDecoder::SENT_TO_FAILURE_HEADER => '[42]',
+            HeadersDecoder::ERROR_DETAILS_HEADER => '"just a string"',
+            HeadersDecoder::REDELIVERY_HEADER => '[]',
+            HeadersDecoder::SENT_TO_FAILURE_HEADER => '[42]',
         ]));
 
         self::assertNull($message->exceptionClass);
@@ -191,9 +192,9 @@ final class FailedMessageHeadersDecoderTest extends TestCase
     public function testStampFieldsOfTheWrongTypeAreIgnored(): void
     {
         $message = $this->decode($this->headers([
-            FailedMessageHeadersDecoder::ERROR_DETAILS_HEADER => '[{"exceptionClass":[],"exceptionMessage":{}}]',
-            FailedMessageHeadersDecoder::REDELIVERY_HEADER => '[{"retryCount":"many"}]',
-            FailedMessageHeadersDecoder::SENT_TO_FAILURE_HEADER => '[{"originalReceiverName":false}]',
+            HeadersDecoder::ERROR_DETAILS_HEADER => '[{"exceptionClass":[],"exceptionMessage":{}}]',
+            HeadersDecoder::REDELIVERY_HEADER => '[{"retryCount":"many"}]',
+            HeadersDecoder::SENT_TO_FAILURE_HEADER => '[{"originalReceiverName":false}]',
         ]));
 
         self::assertNull($message->exceptionClass);

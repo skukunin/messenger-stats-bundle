@@ -26,6 +26,7 @@ final class TransportDefinitionRegistryTest extends TestCase
         self::assertSame('doctrine', $async->kind);
         self::assertSame(['transport_name' => 'async'], $async->options);
         self::assertFalse($async->isFailureTransport);
+        self::assertSame('messenger.default_serializer', $async->serializerServiceId);
     }
 
     public function testFailureTransports(): void
@@ -33,13 +34,14 @@ final class TransportDefinitionRegistryTest extends TestCase
         $registry = $this->registry();
 
         self::assertTrue($registry->get('failed')->isFailureTransport);
+        self::assertSame('acme.json_serializer', $registry->get('failed')->serializerServiceId);
         self::assertSame(['failed'], $registry->failureTransportNames());
     }
 
     public function testKindIsDerivedFromTheResolvedDsn(): void
     {
         $registry = new TransportDefinitionRegistry([
-            'env_dsn' => ['dsn' => 'doctrine://default?queue_name=envq', 'options' => [], 'kind' => 'unknown', 'is_failure_transport' => false],
+            'env_dsn' => ['dsn' => 'doctrine://default?queue_name=envq', 'options' => [], 'kind' => 'unknown', 'is_failure_transport' => false, 'serializer' => 'messenger.default_serializer'],
         ]);
 
         self::assertSame('doctrine', $registry->get('env_dsn')->kind);
@@ -48,7 +50,7 @@ final class TransportDefinitionRegistryTest extends TestCase
     public function testKindStaysUnknownWhenTheResolvedDsnHasNoScheme(): void
     {
         $registry = new TransportDefinitionRegistry([
-            'env_dsn' => ['dsn' => 'not-a-dsn', 'options' => [], 'kind' => 'unknown', 'is_failure_transport' => false],
+            'env_dsn' => ['dsn' => 'not-a-dsn', 'options' => [], 'kind' => 'unknown', 'is_failure_transport' => false, 'serializer' => 'messenger.default_serializer'],
         ]);
 
         self::assertSame('unknown', $registry->get('env_dsn')->kind);
@@ -78,9 +80,9 @@ final class TransportDefinitionRegistryTest extends TestCase
     private function registry(): TransportDefinitionRegistry
     {
         return new TransportDefinitionRegistry([
-            'async' => ['dsn' => 'doctrine://default', 'options' => ['transport_name' => 'async'], 'kind' => 'doctrine', 'is_failure_transport' => false],
-            'failed' => ['dsn' => 'doctrine://default?queue_name=failed', 'options' => [], 'kind' => 'doctrine', 'is_failure_transport' => true],
-            'events' => ['dsn' => 'amqp://guest@localhost', 'options' => [], 'kind' => 'amqp', 'is_failure_transport' => false],
+            'async' => ['dsn' => 'doctrine://default', 'options' => ['transport_name' => 'async'], 'kind' => 'doctrine', 'is_failure_transport' => false, 'serializer' => 'messenger.default_serializer'],
+            'failed' => ['dsn' => 'doctrine://default?queue_name=failed', 'options' => [], 'kind' => 'doctrine', 'is_failure_transport' => true, 'serializer' => 'acme.json_serializer'],
+            'events' => ['dsn' => 'amqp://guest@localhost', 'options' => [], 'kind' => 'amqp', 'is_failure_transport' => false, 'serializer' => 'messenger.default_serializer'],
         ]);
     }
 }

@@ -5,12 +5,15 @@ declare(strict_types=1);
 namespace Skukunin\MessengerStatsBundle\Tests\Unit\DependencyInjection\Compiler;
 
 use PHPUnit\Framework\TestCase;
+use Skukunin\MessengerStatsBundle\Collector\EnvelopeDecoder;
 use Skukunin\MessengerStatsBundle\DependencyInjection\Compiler\TransportDiscoveryPass;
 use Skukunin\MessengerStatsBundle\Exception\InvalidArgumentException;
+use Symfony\Component\DependencyInjection\Argument\ServiceClosureArgument;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\Definition;
 use Symfony\Component\DependencyInjection\Reference;
 use Symfony\Component\DependencyInjection\ServiceLocator;
+use Symfony\Component\Messenger\Transport\Serialization\PhpSerializer;
 use Symfony\Component\Messenger\Transport\TransportInterface;
 
 final class TransportDiscoveryPassTest extends TestCase
@@ -28,6 +31,7 @@ final class TransportDiscoveryPassTest extends TestCase
                 'options' => ['transport_name' => 'async'],
                 'kind' => 'doctrine',
                 'is_failure_transport' => false,
+                'serializer' => 'messenger.default_serializer',
             ],
         ], $transports);
     }
@@ -42,6 +46,80 @@ final class TransportDiscoveryPassTest extends TestCase
         self::assertSame('redis://localhost', $transports['async']['dsn']);
         self::assertSame('redis', $transports['async']['kind']);
         self::assertSame(['transport_name' => 'async'], $transports['async']['options']);
+    }
+
+    public function testThePositionalSerializerArgumentIsCaptured(): void
+    {
+        $container = $this->container();
+        $this->addTransport($container, 'async', ['doctrine://default', [], new Reference('acme.json_serializer')]);
+
+        self::assertSame('acme.json_serializer', $this->process($container)['async']['serializer']);
+    }
+
+    public function testTheNamedSerializerArgumentIsCaptured(): void
+    {
+        $container = $this->container();
+        $this->addTransport($container, 'async', ['$dsn' => 'doctrine://default', '$options' => [], '$serializer' => new Reference('acme.json_serializer')]);
+
+        self::assertSame('acme.json_serializer', $this->process($container)['async']['serializer']);
+    }
+
+    public function testEverySerializerIsLocatableByTransportName(): void
+    {
+        $container = $this->container();
+        $container->setDefinition('messenger.default_serializer', new Definition(PhpSerializer::class));
+        $container->setDefinition('acme.json_serializer', new Definition(PhpSerializer::class));
+        $this->addTransport($container, 'async', ['doctrine://default', []]);
+        $this->addTransport($container, 'payments', ['doctrine://default', [], new Reference('acme.json_serializer')]);
+        $decoder = $container->setDefinition(EnvelopeDecoder::class, new Definition(EnvelopeDecoder::class));
+
+        $this->process($container);
+
+        self::assertSame([
+            'async' => 'messenger.default_serializer',
+            'payments' => 'acme.json_serializer',
+        ], $this->locatedSerializerIds($container, $decoder));
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    private function locatedSerializerIds(ContainerBuilder $container, Definition $decoder): array
+    {
+        $locator = $decoder->getArgument('$serializers');
+        self::assertInstanceOf(Reference::class, $locator);
+
+        $map = $this->serviceLocatorPrototype($container, (string) $locator)->getArgument(0);
+        self::assertIsArray($map);
+
+        $ids = [];
+        foreach ($map as $name => $factory) {
+            self::assertInstanceOf(ServiceClosureArgument::class, $factory);
+            $serializer = $factory->getValues()[0];
+            self::assertInstanceOf(Reference::class, $serializer);
+            $ids[(string) $name] = (string) $serializer;
+        }
+
+        return $ids;
+    }
+
+    private function serviceLocatorPrototype(ContainerBuilder $container, string $id): Definition
+    {
+        $definition = $container->findDefinition($id);
+        $factory = $definition->getFactory();
+
+        return \is_array($factory) && $factory[0] instanceof Reference ? $container->findDefinition((string) $factory[0]) : $definition;
+    }
+
+    public function testTransportsWithoutARegisteredSerializerAreNotLocatable(): void
+    {
+        $container = $this->container();
+        $this->addTransport($container, 'async', ['doctrine://default', []]);
+        $decoder = $container->setDefinition(EnvelopeDecoder::class, new Definition(EnvelopeDecoder::class));
+
+        $this->process($container);
+
+        self::assertSame([], $this->locatedSerializerIds($container, $decoder));
     }
 
     public function testSyncAndInMemoryTransportsAreSkipped(): void
@@ -172,13 +250,13 @@ final class TransportDiscoveryPassTest extends TestCase
     }
 
     /**
-     * @return array<string, array{dsn: string, options: array<string, mixed>, kind: string, is_failure_transport: bool}>
+     * @return array<string, array{dsn: string, options: array<string, mixed>, kind: string, is_failure_transport: bool, serializer: string}>
      */
     private function process(ContainerBuilder $container): array
     {
         (new TransportDiscoveryPass())->process($container);
 
-        /** @var array<string, array{dsn: string, options: array<string, mixed>, kind: string, is_failure_transport: bool}> $transports */
+        /** @var array<string, array{dsn: string, options: array<string, mixed>, kind: string, is_failure_transport: bool, serializer: string}> $transports */
         $transports = $container->getParameter('messenger_stats.transports');
 
         return $transports;

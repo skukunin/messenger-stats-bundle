@@ -4,11 +4,14 @@ declare(strict_types=1);
 
 namespace Skukunin\MessengerStatsBundle\DependencyInjection\Compiler;
 
+use Skukunin\MessengerStatsBundle\Collector\EnvelopeDecoder;
 use Skukunin\MessengerStatsBundle\Exception\InvalidArgumentException;
 use Skukunin\MessengerStatsBundle\Transport\TransportKind;
 use Symfony\Component\DependencyInjection\Compiler\CompilerPassInterface;
+use Symfony\Component\DependencyInjection\Compiler\ServiceLocatorTagPass;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\Definition;
+use Symfony\Component\DependencyInjection\Reference;
 
 final class TransportDiscoveryPass implements CompilerPassInterface
 {
@@ -17,6 +20,7 @@ final class TransportDiscoveryPass implements CompilerPassInterface
     private const TRANSPORTS_PARAMETER = 'messenger_stats.transports';
     private const EXCLUDE_PARAMETER = 'messenger_stats.exclude';
     private const THRESHOLDS_PARAMETER = 'messenger_stats.thresholds';
+    private const DEFAULT_SERIALIZER = 'messenger.default_serializer';
     private const IGNORED_KINDS = [TransportKind::SYNC, TransportKind::IN_MEMORY];
 
     public function process(ContainerBuilder $container): void
@@ -29,10 +33,11 @@ final class TransportDiscoveryPass implements CompilerPassInterface
         $this->assertThresholdsAreKnown($container, $transports);
 
         $container->setParameter(self::TRANSPORTS_PARAMETER, $transports);
+        $this->registerSerializerLocator($container, $transports);
     }
 
     /**
-     * @return array<string, array{dsn: string, options: array<string, mixed>, kind: string, is_failure_transport: bool}>
+     * @return array<string, array{dsn: string, options: array<string, mixed>, kind: string, is_failure_transport: bool, serializer: string}>
      */
     private function discover(ContainerBuilder $container): array
     {
@@ -63,6 +68,7 @@ final class TransportDiscoveryPass implements CompilerPassInterface
                     'options' => $this->options($definition),
                     'kind' => $kind,
                     'is_failure_transport' => $this->isFailureTransport($tag, $name, $failureTransportNames),
+                    'serializer' => $this->serializerId($definition),
                 ];
             }
         }
@@ -132,8 +138,15 @@ final class TransportDiscoveryPass implements CompilerPassInterface
         return null === $tagged ? \in_array($name, $failureTransportNames, true) : filter_var($tagged, \FILTER_VALIDATE_BOOL);
     }
 
+    private function serializerId(Definition $definition): string
+    {
+        $serializer = $this->argument($definition, 2, 'serializer');
+
+        return $serializer instanceof Reference || \is_string($serializer) ? (string) $serializer : self::DEFAULT_SERIALIZER;
+    }
+
     /**
-     * @param array<string, array{dsn: string, options: array<string, mixed>, kind: string, is_failure_transport: bool}> $transports
+     * @param array<string, array{dsn: string, options: array<string, mixed>, kind: string, is_failure_transport: bool, serializer: string}> $transports
      */
     private function assertThresholdsAreKnown(ContainerBuilder $container, array $transports): void
     {
@@ -147,5 +160,25 @@ final class TransportDiscoveryPass implements CompilerPassInterface
                 throw new InvalidArgumentException(\sprintf('Unknown transport "%s" configured in "%s", known transports are: %s.', (string) $name, self::THRESHOLDS_PARAMETER, [] === $transports ? 'none' : implode(', ', array_keys($transports))));
             }
         }
+    }
+
+    /**
+     * @param array<string, array{dsn: string, options: array<string, mixed>, kind: string, is_failure_transport: bool, serializer: string}> $transports
+     */
+    private function registerSerializerLocator(ContainerBuilder $container, array $transports): void
+    {
+        if (!$container->hasDefinition(EnvelopeDecoder::class)) {
+            return;
+        }
+
+        $serializers = [];
+        foreach ($transports as $name => $transport) {
+            if ($container->has($transport['serializer'])) {
+                $serializers[$name] = new Reference($transport['serializer']);
+            }
+        }
+
+        $container->getDefinition(EnvelopeDecoder::class)
+            ->setArgument('$serializers', ServiceLocatorTagPass::register($container, $serializers, EnvelopeDecoder::class));
     }
 }

@@ -27,7 +27,7 @@ final class DoctrineTransportStatsCollector implements StatsCollector
     public function __construct(
         private readonly ConnectionRegistry $connections,
         private readonly DoctrineDsnParser $dsnParser,
-        private readonly FailedMessageHeadersDecoder $headersDecoder,
+        private readonly MessageRowDecoder $messages,
         private readonly Clock $clock,
         private readonly ?int $stuckAfterSeconds,
         private readonly int $classBreakdownSampleSize,
@@ -50,8 +50,8 @@ final class DoctrineTransportStatsCollector implements StatsCollector
                 $definition->name,
                 $definition->kind,
                 $definition->isFailureTransport,
-                [$this->queueStatsOf($connection, $settings)],
-                $definition->isFailureTransport ? $this->failuresOf($connection, $settings) : [],
+                [$this->queueStatsOf($connection, $settings, $definition->name)],
+                $definition->isFailureTransport ? $this->failuresOf($connection, $settings, $definition->name) : [],
             );
         } catch (TableNotFoundException) {
             return TransportStats::full($definition->name, $definition->kind, $definition->isFailureTransport, [$this->emptyQueueStatsOf($settings)], []);
@@ -68,7 +68,7 @@ final class DoctrineTransportStatsCollector implements StatsCollector
         return $connection;
     }
 
-    private function queueStatsOf(Connection $connection, DoctrineTransportSettings $settings): QueueStats
+    private function queueStatsOf(Connection $connection, DoctrineTransportSettings $settings, string $transportName): QueueStats
     {
         $now = $this->clock->now();
         $stuckSince = $this->stuckSince($now, $settings);
@@ -86,7 +86,7 @@ final class DoctrineTransportStatsCollector implements StatsCollector
             $inProgress,
             $stuck,
             $this->oldestPendingAgeSecondsOf($connection, $settings, $now),
-            $this->classBreakdownOf($connection, $settings),
+            $this->classBreakdownOf($connection, $settings, $transportName),
             $total > $this->classBreakdownSampleSize,
         );
     }
@@ -147,11 +147,11 @@ final class DoctrineTransportStatsCollector implements StatsCollector
     /**
      * @return array<string, int>
      */
-    private function classBreakdownOf(Connection $connection, DoctrineTransportSettings $settings): array
+    private function classBreakdownOf(Connection $connection, DoctrineTransportSettings $settings, string $transportName): array
     {
         $breakdown = [];
-        foreach ($this->newestRows($connection, $settings, ['headers'], $this->classBreakdownSampleSize) as $row) {
-            $messageClass = $this->headersDecoder->messageClass($this->columnOf($row, 'headers')) ?? FailedMessageHeadersDecoder::UNKNOWN_MESSAGE_CLASS;
+        foreach ($this->newestRows($connection, $settings, ['body', 'headers'], $this->classBreakdownSampleSize) as $row) {
+            $messageClass = $this->messages->messageClass($transportName, $this->columnOf($row, 'body'), $this->columnOf($row, 'headers'));
             $breakdown[$messageClass] = ($breakdown[$messageClass] ?? 0) + 1;
         }
 
@@ -188,11 +188,11 @@ final class DoctrineTransportStatsCollector implements StatsCollector
     /**
      * @return list<FailedMessage>
      */
-    private function failuresOf(Connection $connection, DoctrineTransportSettings $settings): array
+    private function failuresOf(Connection $connection, DoctrineTransportSettings $settings, string $transportName): array
     {
         $failures = [];
-        foreach ($this->newestRows($connection, $settings, ['headers', 'created_at'], $this->failuresLimit) as $row) {
-            $failures[] = $this->headersDecoder->decode($this->columnOf($row, 'headers'), $this->columnOf($row, 'created_at'));
+        foreach ($this->newestRows($connection, $settings, ['body', 'headers', 'created_at'], $this->failuresLimit) as $row) {
+            $failures[] = $this->messages->failedMessage($transportName, $this->columnOf($row, 'body'), $this->columnOf($row, 'headers'), $this->columnOf($row, 'created_at'));
         }
 
         return $failures;

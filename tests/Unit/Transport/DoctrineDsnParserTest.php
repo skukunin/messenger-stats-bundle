@@ -101,6 +101,6 @@ final class DoctrineDsnParserTest extends TestCase
      */
     private function parse(string $dsn, array $options = []): DoctrineTransportSettings
     {
-        return (new DoctrineDsnParser())->parse(new TransportDefinition('async', $dsn, 'doctrine', $options, false));
+        return (new DoctrineDsnParser())->parse(new TransportDefinition('async', $dsn, 'doctrine', $options, false, 'messenger.default_serializer'));
     }
 }

@@ -22,6 +22,7 @@ final class TestKernel extends Kernel
     use MicroKernelTrait;
 
     public const ENV_TRANSPORT_DSN = 'TEST_TRANSPORT_DSN';
+    public const JSON_SERIALIZER = 'messenger.transport.symfony_serializer';
 
     /**
      * @param array<string, mixed> $statsConfig
@@ -42,7 +43,7 @@ final class TestKernel extends Kernel
 
     protected function build(ContainerBuilder $container): void
     {
-        $container->addCompilerPass(new PublicServicesPass([TransportDefinitionRegistry::class, DoctrineDsnParser::class, DoctrineTransportStatsCollector::class]));
+        $container->addCompilerPass(new PublicServicesPass([TransportDefinitionRegistry::class, DoctrineDsnParser::class, DoctrineTransportStatsCollector::class, 'messenger.transport.async', 'messenger.transport.payments']));
     }
 
     protected function configureContainer(ContainerBuilder $container, LoaderInterface $loader): void
@@ -51,11 +52,13 @@ final class TestKernel extends Kernel
             'secret' => 'messenger-stats',
             'test' => true,
             'router' => ['utf8' => true],
+            'property_access' => true,
+            'serializer' => true,
             'messenger' => [
                 'failure_transport' => 'failed',
                 'transports' => [
                     'async' => 'doctrine://default',
-                    'payments' => 'doctrine://default?queue_name=payments',
+                    'payments' => ['dsn' => 'doctrine://default?queue_name=payments', 'serializer' => self::JSON_SERIALIZER],
                     'failed' => 'doctrine://default?queue_name=failed',
                     'retry' => ['dsn' => 'doctrine://default', 'options' => ['queue_name' => 'retry', 'redeliver_timeout' => 60]],
                     'env_dsn' => '%env('.self::ENV_TRANSPORT_DSN.')%',

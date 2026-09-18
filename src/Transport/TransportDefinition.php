@@ -15,6 +15,7 @@ final class TransportDefinition
         public readonly string $kind,
         public readonly array $options,
         public readonly bool $isFailureTransport,
+        public readonly string $serializerServiceId,
     ) {
     }
 }
