@@ -19,11 +19,15 @@ monitor application, Flex recipe.
 | php | ^8.1 |
 | symfony/framework-bundle, http-kernel, messenger, dependency-injection, config, console, event-dispatcher | ^5.4 \|\| ^6.4 \|\| ^7.0 |
 | doctrine/dbal | ^2.13 \|\| ^3.0 \|\| ^4.0 |
+| doctrine/persistence | ^2.2 \|\| ^3.0 \|\| ^4.0 (the `ConnectionRegistry` the Doctrine collector resolves connections through) |
 | symfony/doctrine-messenger | ^5.4 \|\| ^6.4 \|\| ^7.0 (required; Doctrine is the only full-detail collector) |
 | psr/log | ^1 \|\| ^2 \|\| ^3 |
 
-No dependency on `symfony/security-bundle`, `symfony/yaml`, `symfony/clock`,
-`symfony/serializer`.
+No runtime dependency on `symfony/security-bundle`, `symfony/yaml`,
+`symfony/clock`, `symfony/serializer`. `symfony/serializer` and
+`symfony/property-access` are development dependencies only: the integration
+suite needs them to write transport headers the way a host application using
+Messenger's `Serializer` does.
 
 ## 3. Host configuration
 
@@ -144,20 +148,50 @@ of rejected:
 | Class Breakdown | `SELECT headers FROM ... WHERE queue_name = ? ORDER BY id DESC LIMIT sample_size`; decode JSON, read `type`; `sampled = (rows fetched == sample_size AND total count > sample_size)` |
 | Failures | `SELECT headers, created_at FROM ... WHERE queue_name = ? ORDER BY id DESC LIMIT failures.limit` on the Failure Transport |
 
-Failure headers are read from the serialized stamps in `headers`:
-`X-Message-Stamp-Symfony\Component\Messenger\Stamp\ErrorDetailsStamp`
-(exception class, message), `...RedeliveryStamp` (retry count, redelivered
-at), `...SentToFailureTransportStamp` (original receiver name). Missing or
-undecodable stamps yield nulls, never an error.
+The `headers` column holds a JSON object written by the transport's
+serializer. Messenger's `Serializer` writes `type` (the message FQCN), one
+`X-Message-Stamp-<stamp FQCN>` entry per stamp class and `Content-Type`.
+Every stamp header's value is itself a JSON **string** holding an array of
+that class's stamps, so the decoder parses it a second time and takes the
+last element. The fields below were verified against Messenger 7.4; the names
+are the stamps' own property names and have been stable since 5.4, where the
+`RedeliveryStamp` carries additional legacy keys that are ignored:
+
+| Header | Fields read |
+|---|---|
+| `type` | the message class; absent or empty ⇒ `unknown` |
+| `X-Message-Stamp-Symfony\Component\Messenger\Stamp\ErrorDetailsStamp` | `exceptionClass`, `exceptionMessage` (also carries `exceptionCode`, `flattenException`) |
+| `X-Message-Stamp-Symfony\Component\Messenger\Stamp\RedeliveryStamp` | `retryCount` (default 0), `redeliveredAt` (RFC 3339) used as Failed At |
+| `X-Message-Stamp-Symfony\Component\Messenger\Stamp\SentToFailureTransportStamp` | `originalReceiverName` |
+
+Missing headers, invalid JSON, stamps that are not objects and fields of the
+wrong type yield nulls (retry count 0), never an error. `redeliveredAt`
+absent ⇒ Failed At falls back to the row's `created_at`.
+
+Messenger's **default** serializer is `PhpSerializer`, which emits no headers
+at all: `DoctrineSender` then stores `[]` in the column. For such a transport
+the Class Breakdown is a single `unknown` bucket and every Failed Message
+field except the count is null. Reading the message class out of the
+serialized body is out of scope for v1.
 
 All date comparisons are done with PHP-computed timestamps bound as
-parameters, not database date functions, so the SQL is identical on SQLite,
-MySQL and Postgres.
+`Types::DATETIME_IMMUTABLE` parameters, not database date functions, so the
+SQL is identical on SQLite, MySQL and Postgres. `created_at`, `available_at`
+and `delivered_at` are written by doctrine-messenger as UTC
+`datetime_immutable`; timestamps read back are therefore parsed as UTC
+regardless of the process time zone.
 
 Each Doctrine transport is queried on its own connection, resolved through
-`doctrine.dbal.<name>_connection`. If the transport uses `auto_setup` and the
-table does not exist yet, the transport is reported as full detail with all
-zeros, not as unavailable.
+`doctrine.dbal.<name>_connection`, obtained from the `doctrine`
+`ConnectionRegistry`. If the transport uses `auto_setup` and the table does
+not exist yet, the transport is reported as full detail with one zeroed
+Queue named after its `queue_name` and no failures, not as unavailable; the
+Queue is still listed so the Prometheus series stay stable. Any other
+failure propagates and is turned into an Unavailable Transport by the Stats
+Report Builder.
+
+A Doctrine transport definition addresses exactly one `queue_name`, so its
+`queues` list always holds exactly one entry.
 
 ## 6. Transport discovery (compile time)
 

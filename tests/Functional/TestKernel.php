@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Skukunin\MessengerStatsBundle\Tests\Functional;
 
 use Doctrine\Bundle\DoctrineBundle\DoctrineBundle;
+use Skukunin\MessengerStatsBundle\Collector\DoctrineTransportStatsCollector;
 use Skukunin\MessengerStatsBundle\MessengerStatsBundle;
 use Skukunin\MessengerStatsBundle\Tests\Support\PublicServicesPass;
 use Skukunin\MessengerStatsBundle\Transport\DoctrineDsnParser;
@@ -41,7 +42,7 @@ final class TestKernel extends Kernel
 
     protected function build(ContainerBuilder $container): void
     {
-        $container->addCompilerPass(new PublicServicesPass([TransportDefinitionRegistry::class, DoctrineDsnParser::class]));
+        $container->addCompilerPass(new PublicServicesPass([TransportDefinitionRegistry::class, DoctrineDsnParser::class, DoctrineTransportStatsCollector::class]));
     }
 
     protected function configureContainer(ContainerBuilder $container, LoaderInterface $loader): void
