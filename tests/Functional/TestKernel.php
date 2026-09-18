@@ -20,6 +20,7 @@ use Symfony\Component\Config\Loader\LoaderInterface;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\HttpKernel\Bundle\BundleInterface;
 use Symfony\Component\HttpKernel\Kernel;
+use Symfony\Component\Routing\Loader\Configurator\RoutingConfigurator;
 
 final class TestKernel extends Kernel
 {
@@ -28,6 +29,7 @@ final class TestKernel extends Kernel
     public const ENV_TRANSPORT_DSN = 'TEST_TRANSPORT_DSN';
     public const JSON_SERIALIZER = 'messenger.transport.symfony_serializer';
     public const BROKEN_CONNECTION = 'broken_connection';
+    public const ROUTE_PREFIX = '/_messenger';
 
     /**
      * @param array<string, mixed> $statsConfig
@@ -99,6 +101,11 @@ final class TestKernel extends Kernel
             ->addTag('messenger.transport_factory');
 
         $container->loadFromExtension('messenger_stats', $this->statsConfig);
+    }
+
+    protected function configureRoutes(RoutingConfigurator $routes): void
+    {
+        $routes->import(\dirname(__DIR__, 2).'/config/routes.php')->prefix(self::ROUTE_PREFIX);
     }
 
     public function getCacheDir(): string

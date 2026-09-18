@@ -16,11 +16,21 @@ use Skukunin\MessengerStatsBundle\Collector\StatsCollectorResolver;
 use Skukunin\MessengerStatsBundle\Collector\UtcDateTimeParser;
 use Skukunin\MessengerStatsBundle\Health\ThresholdEvaluator;
 use Skukunin\MessengerStatsBundle\Health\ThresholdSet;
+use Skukunin\MessengerStatsBundle\Http\HealthController;
+use Skukunin\MessengerStatsBundle\Http\MetricsController;
+use Skukunin\MessengerStatsBundle\Http\NoStoreResponseFactory;
+use Skukunin\MessengerStatsBundle\Http\StatsController;
+use Skukunin\MessengerStatsBundle\Http\TokenRequestListener;
 use Skukunin\MessengerStatsBundle\Report\ApplicationIdentity;
 use Skukunin\MessengerStatsBundle\Report\ApplicationIdentityFactory;
 use Skukunin\MessengerStatsBundle\Report\StatsReportBuilder;
 use Skukunin\MessengerStatsBundle\Transport\DoctrineDsnParser;
 use Skukunin\MessengerStatsBundle\Transport\TransportDefinitionRegistry;
+use Skukunin\MessengerStatsBundle\View\HealthReportView;
+use Skukunin\MessengerStatsBundle\View\JsonReportView;
+use Skukunin\MessengerStatsBundle\View\ProblemView;
+use Skukunin\MessengerStatsBundle\View\PrometheusReportView;
+use Symfony\Component\HttpKernel\KernelEvents;
 
 return static function (ContainerConfigurator $container): void {
     $services = $container->services()
@@ -103,5 +113,54 @@ return static function (ContainerConfigurator $container): void {
             service(ApplicationIdentity::class),
             service(BundleVersion::class),
             service('logger')->nullOnInvalid(),
+        ]);
+
+    $services->set(ProblemView::class);
+
+    $services->set(JsonReportView::class)
+        ->args([service(ProblemView::class)]);
+
+    $services->set(HealthReportView::class)
+        ->args([service(ProblemView::class)]);
+
+    $services->set(PrometheusReportView::class);
+
+    $services->set(NoStoreResponseFactory::class);
+
+    $services->set(StatsController::class)
+        ->args([
+            service(StatsReportBuilder::class),
+            service(JsonReportView::class),
+            service(NoStoreResponseFactory::class),
+        ])
+        ->tag('controller.service_arguments');
+
+    $services->set(HealthController::class)
+        ->args([
+            service(StatsReportBuilder::class),
+            service(HealthReportView::class),
+            service(NoStoreResponseFactory::class),
+        ])
+        ->tag('controller.service_arguments');
+
+    $services->set(MetricsController::class)
+        ->args([
+            service(StatsReportBuilder::class),
+            service(PrometheusReportView::class),
+            service(NoStoreResponseFactory::class),
+        ])
+        ->tag('controller.service_arguments');
+
+    $services->set(TokenRequestListener::class)
+        ->args([
+            '%messenger_stats.token%',
+            '%messenger_stats.allowed_ips%',
+            service(NoStoreResponseFactory::class),
+            service('logger')->nullOnInvalid(),
+        ])
+        ->tag('kernel.event_listener', [
+            'event' => KernelEvents::REQUEST,
+            'method' => '__invoke',
+            'priority' => TokenRequestListener::PRIORITY,
         ]);
 };

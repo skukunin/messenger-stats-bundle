@@ -17,7 +17,7 @@ monitor application, Flex recipe.
 | Dependency | Constraint |
 |---|---|
 | php | ^8.1 |
-| symfony/framework-bundle, http-kernel, messenger, dependency-injection, config, console, event-dispatcher | ^5.4 \|\| ^6.4 \|\| ^7.0 |
+| symfony/framework-bundle, http-kernel, http-foundation, messenger, dependency-injection, config, console, event-dispatcher | ^5.4 \|\| ^6.4 \|\| ^7.0 |
 | doctrine/dbal | ^2.13 \|\| ^3.0 \|\| ^4.0 |
 | doctrine/persistence | ^2.2 \|\| ^3.0 \|\| ^4.0 (the `ConnectionRegistry` the Doctrine collector resolves connections through) |
 | symfony/doctrine-messenger | ^5.4 \|\| ^6.4 \|\| ^7.0 (required; Doctrine is the only full-detail collector) |
@@ -281,7 +281,10 @@ other collection failure.
 
 ## 7. HTTP
 
-All routes: `GET`, stateless, `Cache-Control: no-store`.
+All routes: `GET`, stateless, `Cache-Control: no-store` — on the rejections of
+§7.1 as well as on the three documents. `ResponseHeaderBag` completes a
+`Cache-Control` that names neither `public`, `private` nor `s-maxage`, so the
+header sent is `no-store, private`.
 
 ### 7.1 Authentication (all routes)
 
@@ -294,7 +297,10 @@ All routes: `GET`, stateless, `Cache-Control: no-store`.
    `403`, body `{"error":"forbidden"}`, log warning.
 
 Implemented as a `kernel.request` listener that acts only when the matched
-route name starts with `messenger_stats_`.
+route name starts with `messenger_stats_`. Its priority is 8: below
+`RouterListener`'s 32, so `_route` is already known, and above 0, so the
+controller is never resolved for a rejected request. Setting the response on
+the event stops the propagation of `kernel.request` by itself.
 
 ### 7.2 `messenger_stats_stats` — `/stats`
 
@@ -357,7 +363,13 @@ route name starts with `messenger_stats_`.
 ```
 
 Dates are RFC 3339 in UTC. Keys absent for a Detail Level are omitted, not
-null, except `count`.
+null, except `count`: a `full` Transport carries `queues`, a `full` Failure
+Transport carries `failures` as well — as `[]` when there is none — and an
+Unavailable Transport carries `error`. Slashes are not escaped in the body.
+
+`class_breakdown` and `transports` are JSON-encoded from PHP arrays, so an
+empty one is written `[]`, not `{}`; an empty Class Breakdown is what a
+Queue on a table that `auto_setup` has not created yet reports.
 
 ### 7.3 `messenger_stats_health` — `/health`
 
@@ -396,8 +408,16 @@ messenger_failed_messages{app="shop",env="prod",transport="failed"} 7
 messenger_health_status{app="shop",env="prod"} 2
 ```
 
-`transport_messages` is omitted when `count` is null. Failure details are not
-exported as metrics.
+`transport_messages` is omitted when `count` is null, and
+`queue_oldest_pending_age_seconds` when the Queue has no pending message. A
+metric family without a single sample is omitted with its `# HELP` and
+`# TYPE` lines, so a report holding only `count` Transports exposes no
+`messenger_queue_*` family at all; `messenger_health_status` is always
+exposed. `messenger_failed_messages` follows the Failure Transport's `count`,
+whatever its Detail Level. Failure details are not exported as metrics.
+
+Label values escape `\` as `\\`, `"` as `\"` and a newline as `\n`; `app` and
+`env` come first in every sample. The exposition ends with a newline.
 
 ## 8. Console
 
@@ -447,9 +467,11 @@ src/
     ThresholdSet.php, ThresholdEvaluator.php
   View/
     JsonReportView.php, HealthReportView.php, PrometheusReportView.php
+    ProblemView.php                  # the problem list shared by JSON and health
   Http/
     StatsController.php, HealthController.php, MetricsController.php
     TokenRequestListener.php
+    NoStoreResponseFactory.php       # the responses of the three routes and of §7.1
   Console/
     StatsCommand.php, TableRenderer.php
   Clock/
@@ -460,13 +482,15 @@ config/
 
 Interfaces carry no `Interface` suffix; implementations carry descriptive
 suffixes. Models are plain readonly DTOs with no services injected.
-Controllers call only `StatsReportBuilder` and a view.
+Controllers call only `StatsReportBuilder`, a view and the response factory;
+they are invokable services tagged `controller.service_arguments` and extend
+no framework base class.
 
 ## 10. Tests
 
 | Layer | Tooling | Covers |
 |---|---|---|
-| Unit | PHPUnit | DoctrineDsnParser, MessageRowDecoder with HeadersDecoder and EnvelopeDecoder, ThresholdEvaluator, HealthStatus derivation, three views, TableRenderer, TokenRequestListener (with mocked request) |
+| Unit | PHPUnit | DoctrineDsnParser, MessageRowDecoder with HeadersDecoder and EnvelopeDecoder, ThresholdEvaluator, HealthStatus derivation, the four views, the three controllers, TableRenderer, TokenRequestListener (with mocked request) |
 | Integration | PHPUnit + SQLite in-memory + real `DoctrineTransport` | DoctrineTransportStatsCollector, run twice from one abstract case (`PhpSerializer` and `Serializer`): dispatch via transport, manipulate `delivered_at`/`available_at`, send to failure transport, assert counts/ages/breakdown/sampling/missing table, and a hand-written row whose class no longer exists |
 | Functional | PHPUnit + minimal `TestKernel` | TransportDiscoveryPass against a real `framework.messenger` config, `StatsReportBuilder` over Doctrine transports plus a count-aware transport from a test transport factory and a transport on an unreachable connection, routes, 404/401/403/200/503 behaviour, console command exit codes |
 
