@@ -8,6 +8,8 @@ use Skukunin\MessengerStatsBundle\Clock\Clock;
 use Skukunin\MessengerStatsBundle\Clock\SystemClock;
 use Skukunin\MessengerStatsBundle\Health\ThresholdEvaluator;
 use Skukunin\MessengerStatsBundle\Health\ThresholdSet;
+use Skukunin\MessengerStatsBundle\Transport\DoctrineDsnParser;
+use Skukunin\MessengerStatsBundle\Transport\TransportDefinitionRegistry;
 
 return static function (ContainerConfigurator $container): void {
     $services = $container->services()
@@ -23,4 +25,9 @@ return static function (ContainerConfigurator $container): void {
         ->args(['%messenger_stats.thresholds%']);
 
     $services->set(ThresholdEvaluator::class);
+
+    $services->set(TransportDefinitionRegistry::class)
+        ->args(['%messenger_stats.transports%']);
+
+    $services->set(DoctrineDsnParser::class);
 };

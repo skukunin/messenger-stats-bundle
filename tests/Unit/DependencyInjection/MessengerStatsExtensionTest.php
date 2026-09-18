@@ -10,6 +10,8 @@ use Skukunin\MessengerStatsBundle\Clock\SystemClock;
 use Skukunin\MessengerStatsBundle\DependencyInjection\MessengerStatsExtension;
 use Skukunin\MessengerStatsBundle\Health\ThresholdEvaluator;
 use Skukunin\MessengerStatsBundle\Health\ThresholdSet;
+use Skukunin\MessengerStatsBundle\Transport\DoctrineDsnParser;
+use Skukunin\MessengerStatsBundle\Transport\TransportDefinitionRegistry;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 
 final class MessengerStatsExtensionTest extends TestCase
@@ -66,6 +68,8 @@ final class MessengerStatsExtensionTest extends TestCase
         self::assertSame(SystemClock::class, (string) $container->getAlias(Clock::class));
         self::assertTrue($container->hasDefinition(ThresholdEvaluator::class));
         self::assertSame('%messenger_stats.thresholds%', $container->getDefinition(ThresholdSet::class)->getArgument(0));
+        self::assertTrue($container->hasDefinition(DoctrineDsnParser::class));
+        self::assertSame('%messenger_stats.transports%', $container->getDefinition(TransportDefinitionRegistry::class)->getArgument(0));
     }
 
     /**

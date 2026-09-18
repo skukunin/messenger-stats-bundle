@@ -128,7 +128,11 @@ Rules:
 
 Given transport options `table_name` (default `messenger_messages`),
 `queue_name` (default `default`), connection name from the DSN, and `now`
-from the Clock:
+from the Clock. `DoctrineDsnParser` resolves them the way
+`Connection::buildConfiguration()` does: the DSN query string wins over the
+transport's `options`, which win over the defaults; a DSN without a host
+falls back to connection `default`, and unknown options are ignored instead
+of rejected:
 
 | Field | Query |
 |---|---|
@@ -162,15 +166,18 @@ tag's `alias` as the transport name, and the factory arguments `$dsn` and
 `$options`. Results are stored in the parameter `messenger_stats.transports`:
 
 ```
-[name => ['dsn' => string, 'options' => array, 'kind' => string]]
+[name => ['dsn' => string, 'options' => array, 'kind' => string, 'is_failure_transport' => bool]]
 ```
 
 Transports with scheme `sync` or `in-memory`, and names listed in `exclude`,
-are dropped. The Failure Transport name is read from the
-`messenger.failure_transports` service locator (global failure transport and
-per-transport `failure_transport` options are both recognised). Env
-placeholders in DSNs are resolved at runtime via the container's parameter
-bag, not at compile time.
+are dropped. The Failure Transport is read from the `is_failure_transport`
+attribute of the `messenger.receiver` tag, which covers both the global
+failure transport and per-transport `failure_transport` options; a
+`messenger.failure_transports` service locator is used only as a fallback
+when the attribute is absent. Env placeholders in DSNs are resolved at
+runtime when the container reads the parameter, not at compile time; a DSN
+that is entirely an env placeholder is stored with kind `unknown` and its
+kind is derived again from the resolved DSN by the runtime registry.
 
 The `kind` is the DSN scheme. A runtime `StatsCollectorResolver` returns the
 `DoctrineTransportStatsCollector` for kind `doctrine`, and the
@@ -317,9 +324,15 @@ src/
     MessengerStatsExtension.php
     Compiler/TransportDiscoveryPass.php
   Transport/
-    TransportDefinition.php          # name, dsn, options, kind, isFailure
+    TransportDefinition.php          # name, dsn, kind, options, isFailureTransport
     TransportDefinitionRegistry.php  # built from the parameter at runtime
+    TransportKind.php                # DSN scheme constants and derivation
     DoctrineDsnParser.php
+    DoctrineTransportSettings.php    # connection, table, queue, redeliver, autoSetup
+  Exception/
+    MessengerStatsException.php      # marker interface
+    InvalidArgumentException.php, UnknownTransportException.php,
+    UnsupportedTransportDsnException.php
   Collector/
     StatsCollector.php               # interface: supports(def), collect(def): TransportStats
     StatsCollectorResolver.php
