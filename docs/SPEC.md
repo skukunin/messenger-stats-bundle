@@ -1,0 +1,376 @@
+# Messenger Stats Bundle — Specification v1
+
+Vocabulary: see [CONTEXT.md](../CONTEXT.md). Decisions: see [adr/](adr/).
+
+## 1. Scope
+
+A Symfony bundle that reports the state of the host application's Messenger
+transports as a Stats Report, exposed as JSON, a health check, Prometheus
+metrics and a console command. It reads; it never consumes, retries or
+removes messages.
+
+Out of scope for v1: throughput, worker liveness, report caching, a central
+monitor application, Flex recipe.
+
+## 2. Compatibility
+
+| Dependency | Constraint |
+|---|---|
+| php | ^8.1 |
+| symfony/framework-bundle, http-kernel, messenger, dependency-injection, config, console, event-dispatcher | ^5.4 \|\| ^6.4 \|\| ^7.0 |
+| doctrine/dbal | ^2.13 \|\| ^3.0 \|\| ^4.0 |
+| symfony/doctrine-messenger | ^5.4 \|\| ^6.4 \|\| ^7.0 (required; Doctrine is the only full-detail collector) |
+| psr/log | ^1 \|\| ^2 \|\| ^3 |
+
+No dependency on `symfony/security-bundle`, `symfony/yaml`, `symfony/clock`,
+`symfony/serializer`.
+
+## 3. Host configuration
+
+```yaml
+# config/packages/messenger_stats.yaml
+messenger_stats:
+    token: '%env(MESSENGER_STATS_TOKEN)%'   # empty/unset => routes answer 404
+    allowed_ips: []                         # optional; IPs or CIDRs, applied after the token
+    app_name: ~                             # default: basename of kernel.project_dir, resolved at runtime
+    exclude: []                             # transport names to skip
+    stuck_after_seconds: ~                  # default: each transport's redeliver_timeout
+    class_breakdown_sample_size: 1000
+    failures:
+        limit: 10
+        expose_message: true
+    thresholds: {}                          # see 3.1
+```
+
+```yaml
+# config/routes/messenger_stats.yaml
+messenger_stats:
+    resource: '@MessengerStatsBundle/config/routes.php'
+    prefix: '/_messenger'
+```
+
+### 3.1 Thresholds
+
+```yaml
+thresholds:
+    <transport name>:
+        <metric>: { warning: <int|null>, critical: <int|null> }
+```
+
+Allowed `<metric>` values and what they compare against:
+
+| Metric | Compared value |
+|---|---|
+| `pending` | sum of Pending over the transport's queues |
+| `delayed` | sum of Delayed |
+| `in_progress` | sum of In Progress |
+| `stuck` | sum of Stuck |
+| `oldest_pending_age_seconds` | max over queues |
+| `failed` | Failed Message count (only meaningful on the Failure Transport) |
+| `count` | total messages (the only metric available at Detail Level `count`) |
+
+A level is breached when `value >= threshold`. Unknown transport names or
+metrics fail container compilation.
+
+## 4. Stats Report (domain model)
+
+```
+StatsReport
+  generatedAt: DateTimeImmutable
+  app: string
+  env: string
+  schemaVersion: "1"
+  bundleVersion: string
+  status: HealthStatus (ok|warning|critical)
+  problems: Problem[]
+  transports: TransportStats[]
+
+TransportStats
+  name: string
+  kind: string                 # "doctrine", "amqp", "redis", ... derived from DSN scheme
+  detailLevel: DetailLevel     # full|count|unavailable
+  isFailureTransport: bool
+  count: ?int                  # null when unavailable
+  queues: QueueStats[]         # full only
+  failures: FailedMessage[]    # full + failure transport only
+  error: ?string               # unavailable only; exception class
+
+QueueStats
+  name: string
+  pending, delayed, inProgress, stuck: int
+  oldestPendingAgeSeconds: ?int   # null when no pending messages
+  classBreakdown: array<string,int>  # class => count
+  classBreakdownSampled: bool
+
+FailedMessage
+  messageClass: string
+  exceptionClass: ?string
+  exceptionMessage: ?string       # null when expose_message = false
+  failedAt: ?DateTimeImmutable
+  retryCount: int
+  originalTransport: ?string
+
+Problem
+  transport, metric: string
+  value, threshold: int
+  level: warning|critical
+```
+
+Rules:
+
+- `status` is the worst level among `problems`; `ok` when none.
+- An Unavailable Transport contributes a Problem with level `critical` if any
+  threshold is configured for that transport, otherwise `warning`, with
+  metric `up`, value 0, threshold 1.
+- The report is built once per request/command and handed to a Report View.
+
+## 5. Doctrine collector queries
+
+Given transport options `table_name` (default `messenger_messages`),
+`queue_name` (default `default`), connection name from the DSN, and `now`
+from the Clock:
+
+| Field | Query |
+|---|---|
+| Pending | `COUNT(*) WHERE queue_name = ? AND delivered_at IS NULL AND available_at <= now` |
+| Delayed | `COUNT(*) WHERE queue_name = ? AND delivered_at IS NULL AND available_at > now` |
+| In Progress | `COUNT(*) WHERE queue_name = ? AND delivered_at IS NOT NULL AND delivered_at > now - stuck_after` |
+| Stuck | `COUNT(*) WHERE queue_name = ? AND delivered_at IS NOT NULL AND delivered_at <= now - stuck_after` |
+| Oldest Pending Age | `now - MIN(available_at)` over Pending rows |
+| Class Breakdown | `SELECT headers FROM ... WHERE queue_name = ? ORDER BY id DESC LIMIT sample_size`; decode JSON, read `type`; `sampled = (rows fetched == sample_size AND total count > sample_size)` |
+| Failures | `SELECT headers, created_at FROM ... WHERE queue_name = ? ORDER BY id DESC LIMIT failures.limit` on the Failure Transport |
+
+Failure headers are read from the serialized stamps in `headers`:
+`X-Message-Stamp-Symfony\Component\Messenger\Stamp\ErrorDetailsStamp`
+(exception class, message), `...RedeliveryStamp` (retry count, redelivered
+at), `...SentToFailureTransportStamp` (original receiver name). Missing or
+undecodable stamps yield nulls, never an error.
+
+All date comparisons are done with PHP-computed timestamps bound as
+parameters, not database date functions, so the SQL is identical on SQLite,
+MySQL and Postgres.
+
+Each Doctrine transport is queried on its own connection, resolved through
+`doctrine.dbal.<name>_connection`. If the transport uses `auto_setup` and the
+table does not exist yet, the transport is reported as full detail with all
+zeros, not as unavailable.
+
+## 6. Transport discovery (compile time)
+
+A compiler pass reads every definition tagged `messenger.receiver`, takes the
+tag's `alias` as the transport name, and the factory arguments `$dsn` and
+`$options`. Results are stored in the parameter `messenger_stats.transports`:
+
+```
+[name => ['dsn' => string, 'options' => array, 'kind' => string]]
+```
+
+Transports with scheme `sync` or `in-memory`, and names listed in `exclude`,
+are dropped. The Failure Transport name is read from the
+`messenger.failure_transports` service locator (global failure transport and
+per-transport `failure_transport` options are both recognised). Env
+placeholders in DSNs are resolved at runtime via the container's parameter
+bag, not at compile time.
+
+The `kind` is the DSN scheme. A runtime `StatsCollectorResolver` returns the
+`DoctrineTransportStatsCollector` for kind `doctrine`, and the
+`CountOnlyStatsCollector` for any other transport whose service implements
+`MessageCountAwareInterface`. Transports that support neither are reported as
+`count` with `count: null`.
+
+## 7. HTTP
+
+All routes: `GET`, stateless, `Cache-Control: no-store`.
+
+### 7.1 Authentication (all routes)
+
+1. Token config empty → `404` with an empty body. Because the token is an env
+   placeholder, emptiness is decided at runtime by the listener, never at
+   container compilation.
+2. `Authorization: Bearer <token>` missing or not equal (`hash_equals`) →
+   `401`, body `{"error":"unauthorized"}`, log warning with client IP.
+3. `allowed_ips` non-empty and client IP not matched (`IpUtils::checkIp`) →
+   `403`, body `{"error":"forbidden"}`, log warning.
+
+Implemented as a `kernel.request` listener that acts only when the matched
+route name starts with `messenger_stats_`.
+
+### 7.2 `messenger_stats_stats` — `/stats`
+
+`200 application/json`:
+
+```json
+{
+  "schema_version": "1",
+  "bundle_version": "0.1.0",
+  "generated_at": "2026-09-18T10:00:00+00:00",
+  "app": "shop",
+  "env": "prod",
+  "status": "critical",
+  "problems": [
+    {"transport": "async_payments", "metric": "oldest_pending_age_seconds", "value": 900, "threshold": 600, "level": "critical"}
+  ],
+  "transports": {
+    "async_payments": {
+      "kind": "doctrine",
+      "detail_level": "full",
+      "is_failure_transport": false,
+      "count": 46,
+      "queues": {
+        "payments": {
+          "pending": 42,
+          "delayed": 3,
+          "in_progress": 1,
+          "stuck": 0,
+          "oldest_pending_age_seconds": 900,
+          "class_breakdown": {"App\\Message\\RecurringPaymentMessage": 46},
+          "class_breakdown_sampled": false
+        }
+      }
+    },
+    "failed": {
+      "kind": "doctrine",
+      "detail_level": "full",
+      "is_failure_transport": true,
+      "count": 7,
+      "queues": { "failed": { "pending": 7, "delayed": 0, "in_progress": 0, "stuck": 0, "oldest_pending_age_seconds": 86400, "class_breakdown": {"App\\Message\\SendEmail": 7}, "class_breakdown_sampled": false } },
+      "failures": [
+        {"message_class": "App\\Message\\SendEmail", "exception_class": "Symfony\\Component\\Mailer\\Exception\\TransportException", "exception_message": "Connection refused", "failed_at": "2026-09-17T10:00:00+00:00", "retry_count": 3, "original_transport": "async"}
+      ]
+    },
+    "events": {
+      "kind": "amqp",
+      "detail_level": "count",
+      "is_failure_transport": false,
+      "count": 12
+    },
+    "reporting": {
+      "kind": "doctrine",
+      "detail_level": "unavailable",
+      "is_failure_transport": false,
+      "count": null,
+      "error": "Doctrine\\DBAL\\Exception\\ConnectionException"
+    }
+  }
+}
+```
+
+Dates are RFC 3339 in UTC. Keys absent for a Detail Level are omitted, not
+null, except `count`.
+
+### 7.3 `messenger_stats_health` — `/health`
+
+`200` when `status` is `ok` or `warning`, `503` when `critical`. Body is
+`{"status": "...", "problems": [...]}`.
+
+### 7.4 `messenger_stats_metrics` — `/metrics`
+
+`200 text/plain; version=0.0.4; charset=utf-8`. Labels `app` and `env` on
+every sample.
+
+```
+# HELP messenger_transport_up 1 when the transport could be read.
+# TYPE messenger_transport_up gauge
+messenger_transport_up{app="shop",env="prod",transport="async_payments"} 1
+# HELP messenger_transport_messages Total messages in the transport.
+# TYPE messenger_transport_messages gauge
+messenger_transport_messages{app="shop",env="prod",transport="async_payments"} 46
+# HELP messenger_queue_messages Messages per queue and state.
+# TYPE messenger_queue_messages gauge
+messenger_queue_messages{app="shop",env="prod",transport="async_payments",queue="payments",state="pending"} 42
+messenger_queue_messages{...,state="delayed"} 3
+messenger_queue_messages{...,state="in_progress"} 1
+messenger_queue_messages{...,state="stuck"} 0
+# HELP messenger_queue_oldest_pending_age_seconds Age of the oldest pending message.
+# TYPE messenger_queue_oldest_pending_age_seconds gauge
+messenger_queue_oldest_pending_age_seconds{app="shop",env="prod",transport="async_payments",queue="payments"} 900
+# HELP messenger_queue_class_messages Messages per class (sampled).
+# TYPE messenger_queue_class_messages gauge
+messenger_queue_class_messages{app="shop",env="prod",transport="async_payments",queue="payments",class="App\\Message\\RecurringPaymentMessage"} 46
+# HELP messenger_failed_messages Messages in the failure transport.
+# TYPE messenger_failed_messages gauge
+messenger_failed_messages{app="shop",env="prod",transport="failed"} 7
+# HELP messenger_health_status 0 ok, 1 warning, 2 critical.
+# TYPE messenger_health_status gauge
+messenger_health_status{app="shop",env="prod"} 2
+```
+
+`transport_messages` is omitted when `count` is null. Failure details are not
+exported as metrics.
+
+## 8. Console
+
+`bin/console messenger:stats [--format=table|json]`
+
+- `table` (default): one table per transport; failure transport also prints
+  the failures table. Problems printed at the end.
+- `json`: the same document as `/stats`.
+- Exit code `0` for `ok`/`warning`, `1` for `critical`.
+
+## 9. Architecture
+
+```
+src/
+  MessengerStatsBundle.php
+  DependencyInjection/
+    Configuration.php
+    MessengerStatsExtension.php
+    Compiler/TransportDiscoveryPass.php
+  Transport/
+    TransportDefinition.php          # name, dsn, options, kind, isFailure
+    TransportDefinitionRegistry.php  # built from the parameter at runtime
+    DoctrineDsnParser.php
+  Collector/
+    StatsCollector.php               # interface: supports(def), collect(def): TransportStats
+    StatsCollectorResolver.php
+    DoctrineTransportStatsCollector.php
+    CountOnlyStatsCollector.php
+    FailedMessageHeadersDecoder.php
+  Report/
+    StatsReport.php, TransportStats.php, QueueStats.php, FailedMessage.php,
+    Problem.php, HealthStatus.php (enum), DetailLevel.php (enum)
+    StatsReportBuilder.php           # registry + resolver + evaluator -> StatsReport
+  Health/
+    ThresholdSet.php, ThresholdEvaluator.php
+  View/
+    JsonReportView.php, HealthReportView.php, PrometheusReportView.php
+  Http/
+    StatsController.php, HealthController.php, MetricsController.php
+    TokenRequestListener.php
+  Console/
+    StatsCommand.php, TableRenderer.php
+  Clock/
+    Clock.php, SystemClock.php
+config/
+  services.php, routes.php
+```
+
+Interfaces carry no `Interface` suffix; implementations carry descriptive
+suffixes. Models are plain readonly DTOs with no services injected.
+Controllers call only `StatsReportBuilder` and a view.
+
+## 10. Tests
+
+| Layer | Tooling | Covers |
+|---|---|---|
+| Unit | PHPUnit | DoctrineDsnParser, FailedMessageHeadersDecoder, ThresholdEvaluator, HealthStatus derivation, three views, TableRenderer, TokenRequestListener (with mocked request) |
+| Integration | PHPUnit + SQLite in-memory + real `DoctrineTransport` | DoctrineTransportStatsCollector: dispatch via transport, manipulate `delivered_at`/`available_at`, send to failure transport, assert counts/ages/breakdown/sampling/missing table |
+| Functional | PHPUnit + minimal `TestKernel` | TransportDiscoveryPass against a real `framework.messenger` config, routes, 404/401/403/200/503 behaviour, console command exit codes |
+
+CI (GitHub Actions): `lowest` (PHP 8.1, Symfony 5.4, DBAL 2, `--prefer-lowest`),
+`highest` (latest PHP 8, Symfony 7, DBAL 4), plus `mysql` (highest + MySQL 8
+service running the integration suite). PHPStan level max and php-cs-fixer
+`@Symfony` + `declare_strict_types` on every job.
+
+## 11. Delivery order
+
+1. Skeleton: composer.json, bundle class, extension, configuration, CI, tooling.
+2. Report model, Clock, ThresholdEvaluator (unit).
+3. DoctrineDsnParser, TransportDiscoveryPass, registry (unit + functional).
+4. DoctrineTransportStatsCollector, FailedMessageHeadersDecoder (integration).
+5. CountOnlyStatsCollector, resolver, StatsReportBuilder, unavailable handling.
+6. Views + controllers + token listener (unit + functional).
+7. Console command.
+8. README (install, config, Uptime Kuma, Prometheus/Grafana, security notes).
+9. Wire into a host application via path repository; smoke-test on real data; tag v0.1.0 once
+   the remote exists.

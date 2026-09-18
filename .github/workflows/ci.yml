@@ -1,0 +1,109 @@
+name: CI
+
+on:
+    push:
+        branches: [main, master]
+    pull_request:
+
+permissions:
+    contents: read
+
+jobs:
+    lowest:
+        name: PHP 8.1, Symfony 5.4, lowest dependencies
+        runs-on: ubuntu-latest
+        env:
+            SYMFONY_REQUIRE: 5.4.*
+        steps:
+            - uses: actions/checkout@v4
+
+            - uses: shivammathur/setup-php@v2
+              with:
+                  php-version: '8.1'
+                  coverage: none
+
+            - name: Install Symfony Flex
+              run: |
+                  composer global config --no-plugins allow-plugins.symfony/flex true
+                  composer global require --no-progress --no-scripts --no-plugins symfony/flex
+
+            - uses: ramsey/composer-install@v3
+              with:
+                  dependency-versions: lowest
+
+            - run: vendor/bin/php-cs-fixer fix --dry-run --diff
+
+            - run: vendor/bin/phpstan analyse --no-progress
+
+            - run: vendor/bin/phpunit
+
+    highest:
+        name: PHP 8.3, Symfony 7
+        runs-on: ubuntu-latest
+        env:
+            SYMFONY_REQUIRE: 7.*
+        steps:
+            - uses: actions/checkout@v4
+
+            - uses: shivammathur/setup-php@v2
+              with:
+                  php-version: '8.3'
+                  coverage: none
+
+            - name: Install Symfony Flex
+              run: |
+                  composer global config --no-plugins allow-plugins.symfony/flex true
+                  composer global require --no-progress --no-scripts --no-plugins symfony/flex
+
+            - uses: ramsey/composer-install@v3
+              with:
+                  dependency-versions: highest
+
+            - run: vendor/bin/php-cs-fixer fix --dry-run --diff
+
+            - run: vendor/bin/phpstan analyse --no-progress
+
+            - run: vendor/bin/phpunit
+
+    mysql:
+        name: PHP 8.3, MySQL 8 integration suite
+        runs-on: ubuntu-latest
+        env:
+            SYMFONY_REQUIRE: 7.*
+            DATABASE_URL: mysql://root:root@127.0.0.1:3306/messenger_stats_test
+        services:
+            mysql:
+                image: mysql:8
+                env:
+                    MYSQL_ROOT_PASSWORD: root
+                    MYSQL_DATABASE: messenger_stats_test
+                ports:
+                    - 3306:3306
+                options: >-
+                    --health-cmd="mysqladmin ping --silent"
+                    --health-interval=10s
+                    --health-timeout=5s
+                    --health-retries=10
+        steps:
+            - uses: actions/checkout@v4
+
+            - uses: shivammathur/setup-php@v2
+              with:
+                  php-version: '8.3'
+                  extensions: pdo_mysql
+                  coverage: none
+
+            - name: Install Symfony Flex
+              run: |
+                  composer global config --no-plugins allow-plugins.symfony/flex true
+                  composer global require --no-progress --no-scripts --no-plugins symfony/flex
+
+            - uses: ramsey/composer-install@v3
+              with:
+                  dependency-versions: highest
+
+            - run: vendor/bin/php-cs-fixer fix --dry-run --diff
+
+            - run: vendor/bin/phpstan analyse --no-progress
+
+            - run: vendor/bin/phpunit --testsuite integration
