@@ -12,10 +12,19 @@ use Skukunin\MessengerStatsBundle\Health\ThresholdEvaluator;
 use Skukunin\MessengerStatsBundle\Health\ThresholdSet;
 use Skukunin\MessengerStatsBundle\Transport\DoctrineDsnParser;
 use Skukunin\MessengerStatsBundle\Transport\TransportDefinitionRegistry;
+use Symfony\Component\Config\Definition\Exception\InvalidConfigurationException;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 
 final class MessengerStatsExtensionTest extends TestCase
 {
+    public function testNonStringTokenIsRejected(): void
+    {
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessage('messenger_stats.token');
+
+        (new MessengerStatsExtension())->load([['token' => ['not', 'a', 'string']]], new ContainerBuilder());
+    }
+
     public function testAlias(): void
     {
         self::assertSame('messenger_stats', (new MessengerStatsExtension())->getAlias());

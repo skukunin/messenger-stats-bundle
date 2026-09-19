@@ -6,6 +6,7 @@ namespace Skukunin\MessengerStatsBundle\Tests\Unit\DependencyInjection;
 
 use PHPUnit\Framework\TestCase;
 use Skukunin\MessengerStatsBundle\DependencyInjection\Configuration;
+use Symfony\Component\Config\Definition\BaseNode;
 use Symfony\Component\Config\Definition\Exception\InvalidConfigurationException;
 use Symfony\Component\Config\Definition\Processor;
 
@@ -28,6 +29,19 @@ final class ConfigurationTest extends TestCase
     public function testEmptyTokenIsNormalisedToNull(): void
     {
         self::assertNull($this->process(['token' => ''])['token']);
+    }
+
+    public function testTokenAcceptsAnEnvPlaceholderThatMayResolveToAnyType(): void
+    {
+        BaseNode::setPlaceholder('env_token_placeholder', ['bool' => false, 'int' => 0, 'float' => 0.0, 'string' => '', 'array' => []]);
+
+        try {
+            $config = $this->process(['token' => 'env_token_placeholder']);
+        } finally {
+            BaseNode::resetPlaceholders();
+        }
+
+        self::assertSame('env_token_placeholder', $config['token']);
     }
 
     public function testExplicitNullsAreAccepted(): void

@@ -79,6 +79,31 @@ final class HttpEndpointsTest extends TestCase
         return $this->kernels[$key];
     }
 
+    public function testATokenReadFromAnUnsetEnvVariableWithDefaultHidesTheRoutes(): void
+    {
+        putenv('MESSENGER_STATS_TOKEN');
+        unset($_SERVER['MESSENGER_STATS_TOKEN'], $_ENV['MESSENGER_STATS_TOKEN']);
+
+        $response = $this->get('/_messenger/stats', ['token' => '%env(default::MESSENGER_STATS_TOKEN)%']);
+
+        self::assertSame(Response::HTTP_NOT_FOUND, $response->getStatusCode());
+    }
+
+    public function testATokenReadFromAnEnvVariableWithDefaultAuthenticates(): void
+    {
+        putenv('MESSENGER_STATS_TOKEN='.self::TOKEN);
+        $_SERVER['MESSENGER_STATS_TOKEN'] = self::TOKEN;
+
+        try {
+            $response = $this->get('/_messenger/stats', ['token' => '%env(default::MESSENGER_STATS_TOKEN)%', 'app_name' => self::APP], $this->authorization());
+        } finally {
+            putenv('MESSENGER_STATS_TOKEN');
+            unset($_SERVER['MESSENGER_STATS_TOKEN']);
+        }
+
+        self::assertSame(Response::HTTP_OK, $response->getStatusCode());
+    }
+
     public function testAMissingAuthorizationHeaderIsRejectedOnEveryRoute(): void
     {
         foreach (self::PATHS as $path) {

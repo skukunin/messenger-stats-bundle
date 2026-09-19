@@ -23,7 +23,7 @@ final class Configuration implements ConfigurationInterface
 
         $rootNode
             ->children()
-                ->scalarNode('token')
+                ->variableNode('token')
                     ->defaultNull()
                     ->beforeNormalization()
                         ->ifString()
