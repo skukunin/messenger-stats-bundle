@@ -19,7 +19,7 @@ use Symfony\Component\Console\Output\OutputInterface;
 final class TableRenderer
 {
     private const UNKNOWN = '-';
-    private const TRANSPORT_HEADERS = ['Transport', 'Kind', 'Detail', 'Queue', 'Pending', 'Delayed', 'In progress', 'Stuck', 'Oldest pending (s)', 'Count'];
+    private const TRANSPORT_HEADERS = ['Transport', 'Kind', 'Stats', 'Queue', 'Pending', 'Delayed', 'In progress', 'Stuck', 'Oldest pending (s)', 'Count'];
     private const FAILURE_HEADERS = ['Message class', 'Exception', 'Message', 'Failed at', 'Retries', 'Original transport'];
     private const PROBLEM_HEADERS = ['Level', 'Transport', 'Metric', 'Value', 'Threshold'];
 
@@ -106,7 +106,7 @@ final class TableRenderer
     private function countRowOf(TransportStats $transport): array
     {
         return array_merge(
-            [$transport->name, $transport->kind, $transport->detailLevel->value, self::UNKNOWN],
+            [$transport->name, $transport->kind, $this->statsLabelOf($transport->detailLevel), self::UNKNOWN],
             $this->unknownStates(),
             [$this->numberOf($transport->count)],
         );
@@ -125,6 +125,11 @@ final class TableRenderer
         return null === $value ? self::UNKNOWN : (string) $value;
     }
 
+    private function statsLabelOf(DetailLevel $detailLevel): string
+    {
+        return DetailLevel::Count === $detailLevel ? 'count only' : $detailLevel->value;
+    }
+
     /**
      * @return list<string>
      */
@@ -133,7 +138,7 @@ final class TableRenderer
         return [
             $isFirstQueue ? $transport->name : '',
             $transport->kind,
-            $transport->detailLevel->value,
+            $this->statsLabelOf($transport->detailLevel),
             $queue->name,
             (string) $queue->pending,
             (string) $queue->delayed,
@@ -150,7 +155,7 @@ final class TableRenderer
     private function unavailableRowOf(TransportStats $transport): array
     {
         return array_merge(
-            [$transport->name, $transport->kind, $transport->detailLevel->value, 'unavailable: '.$transport->error],
+            [$transport->name, $transport->kind, $this->statsLabelOf($transport->detailLevel), 'unavailable: '.$transport->error],
             $this->unknownStates(),
             [''],
         );

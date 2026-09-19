@@ -55,10 +55,10 @@ final class TableRendererTest extends TestCase
     {
         $rows = $this->rowsOf($this->render(StatsReportFixture::specExample()));
 
-        self::assertContains(['Transport', 'Kind', 'Detail', 'Queue', 'Pending', 'Delayed', 'In progress', 'Stuck', 'Oldest pending (s)', 'Count'], $rows);
+        self::assertContains(['Transport', 'Kind', 'Stats', 'Queue', 'Pending', 'Delayed', 'In progress', 'Stuck', 'Oldest pending (s)', 'Count'], $rows);
         self::assertContains(['async_payments', 'doctrine', 'full', 'payments', '42', '3', '1', '0', '900', '46'], $rows);
         self::assertContains(['failed', 'doctrine', 'full', '-', '-', '-', '-', '-', '-', '7'], $rows);
-        self::assertContains(['events', 'amqp', 'count', '-', '-', '-', '-', '-', '-', '12'], $rows);
+        self::assertContains(['events', 'amqp', 'count only', '-', '-', '-', '-', '-', '-', '12'], $rows);
         self::assertContains(['reporting', 'doctrine', 'unavailable', 'unavailable: Doctrine\DBAL\Exception\ConnectionException', '-', '-', '-', '-', '-', ''], $rows);
     }
 
@@ -114,7 +114,7 @@ final class TableRendererTest extends TestCase
         $rows = $this->rowsOf($this->render($report));
 
         self::assertContains(['async', 'doctrine', 'full', 'default', '0', '0', '0', '0', '-', '0'], $rows);
-        self::assertContains(['events', 'amqp', 'count', '-', '-', '-', '-', '-', '-', '-'], $rows);
+        self::assertContains(['events', 'amqp', 'count only', '-', '-', '-', '-', '-', '-', '-'], $rows);
     }
 
     public function testAFullTransportWithoutQueuesIsStillRenderedAsOneRow(): void

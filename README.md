@@ -311,11 +311,11 @@ bin/console messenger:stats
 App: shop  Env: prod  Generated: 2026-09-18T10:00:00+00:00  Status: critical
 
 +----------------+----------+-------------+----------+---------+---------+-------------+-------+--------------------+-------+
-| Transport      | Kind     | Detail      | Queue    | Pending | Delayed | In progress | Stuck | Oldest pending (s) | Count |
+| Transport      | Kind     | Stats       | Queue    | Pending | Delayed | In progress | Stuck | Oldest pending (s) | Count |
 +----------------+----------+-------------+----------+---------+---------+-------------+-------+--------------------+-------+
 | async_payments | doctrine | full        | payments | 42      | 3       | 1           | 0     | 900                | 46    |
 | failed         | doctrine | full        | -        | -       | -       | -           | -     | -                  | 7     |
-| events         | amqp     | count       | -        | -       | -       | -           | -     | -                  | 12    |
+| events         | amqp     | count only  | -        | -       | -       | -           | -     | -                  | 12    |
 +----------------+----------+-------------+----------+---------+---------+-------------+-------+--------------------+-------+
 
 Failures on failed

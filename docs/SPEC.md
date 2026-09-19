@@ -509,9 +509,10 @@ App: <app>  Env: <env>  Generated: <RFC 3339, UTC>  Status: <status>
 The Health Status is colored on a decorated output: `ok` green, `warning`
 yellow, `critical` red.
 
-The Transport table has the columns `Transport | Kind | Detail | Queue |
+The Transport table has the columns `Transport | Kind | Stats | Queue |
 Pending | Delayed | In progress | Stuck | Oldest pending (s) | Count`, and one
-row per Transport shape:
+row per Transport shape. The `Stats` column shows the Detail Level, with
+`count` written as `count only`:
 
 | Detail Level | Rows |
 |---|---|
