@@ -11,6 +11,7 @@ use Skukunin\MessengerStatsBundle\DependencyInjection\MessengerStatsExtension;
 use Skukunin\MessengerStatsBundle\Health\ThresholdEvaluator;
 use Skukunin\MessengerStatsBundle\Health\ThresholdSet;
 use Skukunin\MessengerStatsBundle\Transport\DoctrineDsnParser;
+use Skukunin\MessengerStatsBundle\Transport\StorageTimezoneResolver;
 use Skukunin\MessengerStatsBundle\Transport\TransportDefinitionRegistry;
 use Symfony\Component\Config\Definition\Exception\InvalidConfigurationException;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
@@ -43,6 +44,28 @@ final class MessengerStatsExtensionTest extends TestCase
         self::assertSame(10, $container->getParameter('messenger_stats.failures.limit'));
         self::assertTrue($container->getParameter('messenger_stats.failures.expose_message'));
         self::assertSame([], $container->getParameter('messenger_stats.thresholds'));
+        self::assertSame(StorageTimezoneResolver::fromEnvironment()->resolve(StorageTimezoneResolver::AUTO), $container->getParameter('messenger_stats.storage_timezone'));
+    }
+
+    public function testAutoStorageTimezoneIsResolvedWhenTheContainerIsBuilt(): void
+    {
+        $previous = date_default_timezone_get();
+        date_default_timezone_set('Europe/Berlin');
+
+        try {
+            $container = $this->load(['storage_timezone' => 'auto']);
+            $expected = StorageTimezoneResolver::fromEnvironment()->resolve(StorageTimezoneResolver::AUTO);
+        } finally {
+            date_default_timezone_set($previous);
+        }
+
+        self::assertContains($expected, ['UTC', 'Europe/Berlin']);
+        self::assertSame($expected, $container->getParameter('messenger_stats.storage_timezone'));
+    }
+
+    public function testAConfiguredStorageTimezoneIsKept(): void
+    {
+        self::assertSame('America/New_York', $this->load(['storage_timezone' => 'America/New_York'])->getParameter('messenger_stats.storage_timezone'));
     }
 
     public function testConfiguredParameters(): void

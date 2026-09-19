@@ -45,6 +45,7 @@ messenger_stats:
         limit: 10
         expose_message: true
     thresholds: {}                          # see 3.1
+    storage_timezone: auto                  # see 3.2
 ```
 
 ```yaml
@@ -76,6 +77,29 @@ Allowed `<metric>` values and what they compare against:
 
 A level is breached when `value >= threshold`. Unknown transport names or
 metrics fail container compilation.
+
+### 3.2 Storage timezone
+
+`symfony/doctrine-messenger` stores `created_at`, `available_at` and
+`delivered_at` as naive `Y-m-d H:i:s` values. Up to 6.2 it writes them with
+`new \DateTime()`, i.e. in PHP's default timezone (`date.timezone`); from 6.3
+on it writes them with `new \DateTimeImmutable('UTC')`.
+
+`storage_timezone` names the timezone those values are in: `auto` (default) or
+any identifier `\DateTimeZone` accepts; anything else fails the configuration.
+`auto` is resolved once, when the container is compiled, by
+`Transport\StorageTimezoneResolver`: `UTC` when the installed
+`symfony/doctrine-messenger` version (`Composer\InstalledVersions::getVersion()`)
+is `>= 6.3`, otherwise PHP's default timezone at compile time. A version that
+is unknown or does not start with a numeric `major.minor` (e.g. `dev-main`)
+also resolves to the default timezone, because the supported floor, 5.4,
+stores local time. The resolved identifier is stored in the parameter
+`messenger_stats.storage_timezone`.
+
+On Messenger < 6.3 the web server, the CLI and the workers must therefore
+share one `date.timezone`, which Messenger itself already requires there. A
+naive local time inside the hour a DST change repeats is ambiguous and may be
+read one hour off; nothing in the row can disambiguate it.
 
 ## 4. Stats Report (domain model)
 
@@ -214,9 +238,16 @@ through `MessageTypeAwareSerializerInterface::getMessageType()` (Messenger
 All date comparisons are done with PHP-computed timestamps bound as
 `Types::DATETIME_IMMUTABLE` parameters, not database date functions, so the
 SQL is identical on SQLite, MySQL and Postgres. `created_at`, `available_at`
-and `delivered_at` are written by doctrine-messenger as UTC
-`datetime_immutable`; timestamps read back are therefore parsed as UTC
-regardless of the process time zone.
+and `delivered_at` are naive values in the Storage Timezone of §3.2. `now`
+comes from the Clock in UTC; `now - stuck_after` is computed in UTC as well,
+and both are moved into the Storage Timezone (`setTimezone()`) just before
+binding. DBAL's `DateTimeImmutableType` formats a value with its own
+timezone and converts nothing, so the bound string has the same wall-clock
+digits Messenger wrote. Timestamps read back (`MIN(available_at)`,
+`created_at`) are parsed by `StorageDateTimeParser` as wall-clock time in the
+Storage Timezone and returned in UTC, regardless of the process timezone. The
+`redeliveredAt` of a `RedeliveryStamp` carries its own offset and is taken as
+is.
 
 Each Doctrine transport is queried on its own connection, resolved through
 `doctrine.dbal.<name>_connection`, obtained from the `doctrine`
@@ -483,6 +514,7 @@ src/
     TransportKind.php                # DSN scheme constants and derivation
     DoctrineDsnParser.php
     DoctrineTransportSettings.php    # connection, table, queue, redeliver, autoSetup
+    StorageTimezoneResolver.php      # storage_timezone "auto" -> UTC or the default timezone, at compile time
   Exception/
     MessengerStatsException.php      # marker interface
     InvalidArgumentException.php, UnknownTransportException.php,
@@ -495,7 +527,7 @@ src/
     MessageRowDecoder.php            # hybrid: headers when they carry the type, else the envelope
     HeadersDecoder.php
     EnvelopeDecoder.php              # decodes through the transport's own serializer
-    UtcDateTimeParser.php
+    StorageDateTimeParser.php        # naive storage timestamps in the Storage Timezone -> UTC
   Report/
     StatsReport.php, TransportStats.php, QueueStats.php, FailedMessage.php,
     Problem.php, HealthStatus.php (enum), DetailLevel.php (enum)
@@ -531,7 +563,7 @@ no framework base class.
 | Layer | Tooling | Covers |
 |---|---|---|
 | Unit | PHPUnit | DoctrineDsnParser, MessageRowDecoder with HeadersDecoder and EnvelopeDecoder, ThresholdEvaluator, HealthStatus derivation, the four views, the three controllers, TableRenderer, StatsCommand, TokenRequestListener (with mocked request) |
-| Integration | PHPUnit + SQLite in-memory + real `DoctrineTransport` | DoctrineTransportStatsCollector, run twice from one abstract case (`PhpSerializer` and `Serializer`): dispatch via transport, manipulate `delivered_at`/`available_at`, send to failure transport, assert counts/ages/breakdown/sampling/missing table, and a hand-written row whose class no longer exists |
+| Integration | PHPUnit + SQLite in-memory + real `DoctrineTransport` | DoctrineTransportStatsCollector, run twice from one abstract case (`PhpSerializer` and `Serializer`): dispatch via transport, manipulate `delivered_at`/`available_at`, send to failure transport, assert counts/ages/breakdown/sampling/missing table, a hand-written row whose class no longer exists, and rows written in local time the way Messenger 5.4 does, read with Storage Timezone `Europe/Berlin` |
 | Functional | PHPUnit + minimal `TestKernel` | TransportDiscoveryPass against a real `framework.messenger` config, `StatsReportBuilder` over Doctrine transports plus a count-aware transport from a test transport factory and a transport on an unreachable connection, routes, 404/401/403/200/503 behaviour, console command exit codes |
 
 CI (GitHub Actions): `lowest` (PHP 8.1, Symfony 5.4, DBAL 2, `--prefer-lowest`),

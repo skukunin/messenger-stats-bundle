@@ -19,7 +19,7 @@ final class HeadersDecoder
     private const TYPE_HEADER = 'type';
 
     public function __construct(
-        private readonly UtcDateTimeParser $dateTimes,
+        private readonly StorageDateTimeParser $dateTimes,
         private readonly bool $exposeMessage,
     ) {
     }

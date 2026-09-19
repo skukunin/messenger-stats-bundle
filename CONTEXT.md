@@ -62,3 +62,6 @@ One rendering of a Stats Report: JSON, Health (status code only) or Metrics (Pro
 
 ## Unavailable Transport
 A Transport whose Stats Collector failed. Reported with Detail Level `unavailable` and the failure kind; it never blocks the rest of the Stats Report.
+
+## Storage Timezone
+The timezone in which the Doctrine transport wrote its naive `created_at`, `available_at` and `delivered_at` values: UTC from Messenger 6.3, PHP's default timezone before. Configured as `storage_timezone`; `auto` resolves it when the container is compiled.

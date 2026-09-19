@@ -10,7 +10,7 @@ use RuntimeException;
 use Skukunin\MessengerStatsBundle\Collector\EnvelopeDecoder;
 use Skukunin\MessengerStatsBundle\Collector\HeadersDecoder;
 use Skukunin\MessengerStatsBundle\Collector\MessageRowDecoder;
-use Skukunin\MessengerStatsBundle\Collector\UtcDateTimeParser;
+use Skukunin\MessengerStatsBundle\Collector\StorageDateTimeParser;
 use Skukunin\MessengerStatsBundle\Tests\Support\Message\RebuildIndex;
 use Skukunin\MessengerStatsBundle\Tests\Support\Message\SendInvoice;
 use Symfony\Component\DependencyInjection\ServiceLocator;
@@ -34,7 +34,7 @@ final class MessageRowDecoderTest extends TestCase
 
     private function decoder(SerializerInterface $serializer, bool $exposeMessage = true): MessageRowDecoder
     {
-        $dateTimes = new UtcDateTimeParser();
+        $dateTimes = new StorageDateTimeParser('UTC');
 
         return new MessageRowDecoder(
             new HeadersDecoder($dateTimes, $exposeMessage),

@@ -128,7 +128,18 @@ messenger_stats:
         limit: 10
         expose_message: true
     thresholds: {}
+    storage_timezone: auto          # or a timezone identifier, e.g. 'Europe/Berlin'
 ```
+
+`storage_timezone` is the timezone the Doctrine transport writes its
+timestamps in. Messenger 6.3 and later write UTC; Messenger 5.4 to 6.2 write
+PHP's default timezone (`date.timezone`). `auto` picks the right one from the
+installed `symfony/doctrine-messenger` version when the container is
+compiled, and falls back to the default timezone when the version cannot be
+read. On Messenger < 6.3 the web server, the CLI and the workers must share
+one `date.timezone` (Messenger already requires that); set
+`storage_timezone` explicitly if they do not, or if the container is compiled
+under a different timezone than the workers run in.
 
 `sync://` and `in-memory://` transports are always skipped.
 
@@ -348,8 +359,11 @@ if ($event->getRequest()->attributes->getBoolean('_stateless')) {
   `stuck_after_seconds` is set. Setting it above `redeliver_timeout` has no
   effect, because Messenger redelivers the message first.
 - Time comparisons are computed in PHP and bound as parameters, so the SQL is
-  identical on SQLite, MySQL and PostgreSQL.
-
+  identical on SQLite, MySQL and PostgreSQL. They are made in the timezone
+  Messenger stored the timestamps in (`storage_timezone`) and reported in UTC.
+- Messenger < 6.3 stores local time without an offset. A timestamp written
+  during the hour a DST change repeats in autumn is inherently ambiguous and
+  may be read one hour off.
 ## Not covered
 
 Throughput (messages processed per minute), worker process liveness, and

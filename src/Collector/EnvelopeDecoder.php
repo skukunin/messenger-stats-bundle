@@ -20,7 +20,7 @@ final class EnvelopeDecoder
 {
     public function __construct(
         private readonly ContainerInterface $serializers,
-        private readonly UtcDateTimeParser $dateTimes,
+        private readonly StorageDateTimeParser $dateTimes,
         private readonly bool $exposeMessage,
     ) {
     }

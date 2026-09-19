@@ -6,7 +6,7 @@ namespace Skukunin\MessengerStatsBundle\Tests\Unit\Collector;
 
 use PHPUnit\Framework\TestCase;
 use Skukunin\MessengerStatsBundle\Collector\HeadersDecoder;
-use Skukunin\MessengerStatsBundle\Collector\UtcDateTimeParser;
+use Skukunin\MessengerStatsBundle\Collector\StorageDateTimeParser;
 use Skukunin\MessengerStatsBundle\Report\FailedMessage;
 
 final class HeadersDecoderTest extends TestCase
@@ -34,7 +34,7 @@ final class HeadersDecoderTest extends TestCase
 
     private function decoder(bool $exposeMessage = true): HeadersDecoder
     {
-        return new HeadersDecoder(new UtcDateTimeParser(), $exposeMessage);
+        return new HeadersDecoder(new StorageDateTimeParser('UTC'), $exposeMessage);
     }
 
     private function decode(string $headers, bool $exposeMessage = true, string $createdAt = self::CREATED_AT): FailedMessage

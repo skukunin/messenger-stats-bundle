@@ -8,7 +8,7 @@ use DateTimeImmutable;
 use Error;
 use PHPUnit\Framework\TestCase;
 use Skukunin\MessengerStatsBundle\Collector\EnvelopeDecoder;
-use Skukunin\MessengerStatsBundle\Collector\UtcDateTimeParser;
+use Skukunin\MessengerStatsBundle\Collector\StorageDateTimeParser;
 use Skukunin\MessengerStatsBundle\Report\FailedMessage;
 use Skukunin\MessengerStatsBundle\Tests\Support\Message\SendInvoice;
 use Symfony\Component\DependencyInjection\ServiceLocator;
@@ -37,7 +37,7 @@ final class EnvelopeDecoderTest extends TestCase
     {
         return new EnvelopeDecoder(
             new ServiceLocator([$transportName => static fn (): SerializerInterface => $serializer]),
-            new UtcDateTimeParser(),
+            new StorageDateTimeParser('UTC'),
             $exposeMessage,
         );
     }

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Skukunin\MessengerStatsBundle\Tests\Integration\Collector;
 
 use DateInterval;
+use DateTime;
 use DateTimeImmutable;
 use DateTimeZone;
 use Doctrine\DBAL\Connection as DbalConnection;
@@ -17,7 +18,7 @@ use Skukunin\MessengerStatsBundle\Collector\DoctrineTransportStatsCollector;
 use Skukunin\MessengerStatsBundle\Collector\EnvelopeDecoder;
 use Skukunin\MessengerStatsBundle\Collector\HeadersDecoder;
 use Skukunin\MessengerStatsBundle\Collector\MessageRowDecoder;
-use Skukunin\MessengerStatsBundle\Collector\UtcDateTimeParser;
+use Skukunin\MessengerStatsBundle\Collector\StorageDateTimeParser;
 use Skukunin\MessengerStatsBundle\Report\DetailLevel;
 use Skukunin\MessengerStatsBundle\Report\QueueStats;
 use Skukunin\MessengerStatsBundle\Report\TransportStats;
@@ -43,16 +44,26 @@ abstract class DoctrineTransportStatsCollectorTestCase extends TestCase
 {
     protected const TABLE = 'messenger_messages';
     protected const TRANSPORT = 'async';
+    private const LOCAL_TIMEZONE = 'Europe/Berlin';
+    private const NAIVE_FORMAT = 'Y-m-d H:i:s';
 
     protected DbalConnection $database;
 
     private DateTimeImmutable $now;
 
+    private string $defaultTimezone;
+
     protected function setUp(): void
     {
+        $this->defaultTimezone = date_default_timezone_get();
         $this->database = self::openDatabase();
         $this->database->executeStatement('DROP TABLE IF EXISTS '.$this->database->quoteIdentifier(self::TABLE));
         $this->now = (new DateTimeImmutable('now', new DateTimeZone('UTC')))->add(new DateInterval('PT60S'));
+    }
+
+    protected function tearDown(): void
+    {
+        date_default_timezone_set($this->defaultTimezone);
     }
 
     private static function openDatabase(): DbalConnection
@@ -75,15 +86,17 @@ abstract class DoctrineTransportStatsCollectorTestCase extends TestCase
         self::assertFalse($this->collector()->supports($this->definition('amqp://guest@localhost/%2f/messages')));
     }
 
-    protected function collector(?int $stuckAfterSeconds = 300, int $sampleSize = 1000, int $failuresLimit = 10, bool $exposeMessage = true): DoctrineTransportStatsCollector
+    protected function collector(?int $stuckAfterSeconds = 300, int $sampleSize = 1000, int $failuresLimit = 10, bool $exposeMessage = true, string $storageTimezone = 'UTC'): DoctrineTransportStatsCollector
     {
         $connections = $this->createMock(ConnectionRegistry::class);
         $connections->method('getConnection')->willReturn($this->database);
+        $dateTimes = new StorageDateTimeParser($storageTimezone);
 
         return new DoctrineTransportStatsCollector(
             $connections,
             new DoctrineDsnParser(),
-            $this->rowDecoder($exposeMessage),
+            $this->rowDecoder($dateTimes, $exposeMessage),
+            $dateTimes,
             new FixedClock($this->now),
             $stuckAfterSeconds,
             $sampleSize,
@@ -91,9 +104,8 @@ abstract class DoctrineTransportStatsCollectorTestCase extends TestCase
         );
     }
 
-    private function rowDecoder(bool $exposeMessage): MessageRowDecoder
+    private function rowDecoder(StorageDateTimeParser $dateTimes, bool $exposeMessage): MessageRowDecoder
     {
-        $dateTimes = new UtcDateTimeParser();
         $serializers = new ServiceLocator([self::TRANSPORT => fn (): SerializerInterface => $this->serializer()]);
 
         return new MessageRowDecoder(new HeadersDecoder($dateTimes, $exposeMessage), new EnvelopeDecoder($serializers, $dateTimes, $exposeMessage));
@@ -432,5 +444,84 @@ abstract class DoctrineTransportStatsCollectorTestCase extends TestCase
 
         self::assertSame(4, $stats->count);
         self::assertSame(4, $queue->pending + $queue->delayed + $queue->inProgress + $queue->stuck);
+    }
+
+    public function testAMessageJustWrittenInLocalTimeIsPending(): void
+    {
+        $this->runInBerlin();
+        $this->transport();
+        $justNow = (new DateTime('now', new DateTimeZone(self::LOCAL_TIMEZONE)))->format(self::NAIVE_FORMAT);
+        $this->insertLikeMessenger54(new SendInvoice(), $justNow, $justNow);
+
+        $queue = $this->onlyQueue($this->collector(storageTimezone: self::LOCAL_TIMEZONE)->collect($this->definition()));
+
+        self::assertSame(1, $queue->pending);
+        self::assertSame(0, $queue->delayed);
+        self::assertNotNull($queue->oldestPendingAgeSeconds);
+        self::assertLessThan(120, $queue->oldestPendingAgeSeconds);
+    }
+
+    private function runInBerlin(): void
+    {
+        date_default_timezone_set(self::LOCAL_TIMEZONE);
+    }
+
+    private function insertLikeMessenger54(object $message, string $createdAt, string $availableAt, ?string $deliveredAt = null): void
+    {
+        $encoded = $this->serializer()->encode(new Envelope($message));
+
+        $this->database->insert(self::TABLE, [
+            'body' => $encoded['body'],
+            'headers' => json_encode($encoded['headers'] ?? [], \JSON_THROW_ON_ERROR),
+            'queue_name' => 'default',
+            'created_at' => $createdAt,
+            'available_at' => $availableAt,
+            'delivered_at' => $deliveredAt,
+        ]);
+    }
+
+    public function testTheOldestPendingAgeOfLocalTimeRowsIsTheRealAge(): void
+    {
+        $this->runInBerlin();
+        $this->transport();
+        $this->insertLikeMessenger54(new SendInvoice(), $this->localSecondsAgo(900), $this->localSecondsAgo(900));
+        $this->insertLikeMessenger54(new SendInvoice(), $this->localSecondsAgo(100), $this->localSecondsAgo(100));
+
+        $queue = $this->onlyQueue($this->collector(storageTimezone: self::LOCAL_TIMEZONE)->collect($this->definition()));
+
+        self::assertSame(2, $queue->pending);
+        self::assertSame(900, $queue->oldestPendingAgeSeconds);
+    }
+
+    private function localSecondsAgo(int $seconds): string
+    {
+        return $this->secondsAgo($seconds)->setTimezone(new DateTimeZone(self::LOCAL_TIMEZONE))->format(self::NAIVE_FORMAT);
+    }
+
+    public function testStuckDetectionOfLocalTimeRowsUsesTheRealAge(): void
+    {
+        $this->runInBerlin();
+        $this->transport();
+        $this->insertLikeMessenger54(new SendInvoice(), $this->localSecondsAgo(400), $this->localSecondsAgo(400), $this->localSecondsAgo(10));
+        $this->insertLikeMessenger54(new SendInvoice(), $this->localSecondsAgo(400), $this->localSecondsAgo(400), $this->localSecondsAgo(301));
+
+        $queue = $this->onlyQueue($this->collector(300, storageTimezone: self::LOCAL_TIMEZONE)->collect($this->definition()));
+
+        self::assertSame(0, $queue->pending);
+        self::assertSame(1, $queue->inProgress);
+        self::assertSame(1, $queue->stuck);
+    }
+
+    public function testFailedAtFallsBackToTheLocalCreatedAtAsAUtcInstant(): void
+    {
+        $this->runInBerlin();
+        $this->transport();
+        $this->insertLikeMessenger54(new SendInvoice(), '2026-07-01 12:00:00', '2026-07-01 12:00:00');
+
+        $stats = $this->collector(storageTimezone: self::LOCAL_TIMEZONE)->collect($this->definition(isFailureTransport: true));
+
+        self::assertCount(1, $stats->failures);
+        self::assertNotNull($stats->failures[0]->failedAt);
+        self::assertSame('2026-07-01T10:00:00+00:00', $stats->failures[0]->failedAt->format(\DATE_RFC3339));
     }
 }

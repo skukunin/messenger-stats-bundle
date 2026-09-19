@@ -13,7 +13,7 @@ use Skukunin\MessengerStatsBundle\Collector\EnvelopeDecoder;
 use Skukunin\MessengerStatsBundle\Collector\HeadersDecoder;
 use Skukunin\MessengerStatsBundle\Collector\MessageRowDecoder;
 use Skukunin\MessengerStatsBundle\Collector\StatsCollectorResolver;
-use Skukunin\MessengerStatsBundle\Collector\UtcDateTimeParser;
+use Skukunin\MessengerStatsBundle\Collector\StorageDateTimeParser;
 use Skukunin\MessengerStatsBundle\Console\StatsCommand;
 use Skukunin\MessengerStatsBundle\Console\TableRenderer;
 use Skukunin\MessengerStatsBundle\Health\ThresholdEvaluator;
@@ -54,18 +54,19 @@ return static function (ContainerConfigurator $container): void {
 
     $services->set(DoctrineDsnParser::class);
 
-    $services->set(UtcDateTimeParser::class);
+    $services->set(StorageDateTimeParser::class)
+        ->args(['%messenger_stats.storage_timezone%']);
 
     $services->set(HeadersDecoder::class)
         ->args([
-            service(UtcDateTimeParser::class),
+            service(StorageDateTimeParser::class),
             '%messenger_stats.failures.expose_message%',
         ]);
 
     $services->set(EnvelopeDecoder::class)
         ->args([
             abstract_arg('serializer locator filled by the transport discovery pass'),
-            service(UtcDateTimeParser::class),
+            service(StorageDateTimeParser::class),
             '%messenger_stats.failures.expose_message%',
         ]);
 
@@ -80,6 +81,7 @@ return static function (ContainerConfigurator $container): void {
             service('doctrine'),
             service(DoctrineDsnParser::class),
             service(MessageRowDecoder::class),
+            service(StorageDateTimeParser::class),
             service(Clock::class),
             '%messenger_stats.stuck_after_seconds%',
             '%messenger_stats.class_breakdown_sample_size%',

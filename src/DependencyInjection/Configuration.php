@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace Skukunin\MessengerStatsBundle\DependencyInjection;
 
+use DateTimeZone;
+use Exception;
+use Skukunin\MessengerStatsBundle\Transport\StorageTimezoneResolver;
 use Symfony\Component\Config\Definition\Builder\ArrayNodeDefinition;
 use Symfony\Component\Config\Definition\Builder\IntegerNodeDefinition;
 use Symfony\Component\Config\Definition\Builder\TreeBuilder;
@@ -47,6 +50,13 @@ final class Configuration implements ConfigurationInterface
                     ->end()
                 ->end()
                 ->append($this->thresholdsNode())
+                ->scalarNode('storage_timezone')
+                    ->defaultValue(StorageTimezoneResolver::AUTO)
+                    ->validate()
+                        ->ifTrue($this->isInvalidStorageTimezone(...))
+                        ->thenInvalid('Invalid "messenger_stats.storage_timezone" %s, expected "'.StorageTimezoneResolver::AUTO.'" or a timezone identifier such as "UTC" or "Europe/Berlin".')
+                    ->end()
+                ->end()
             ->end();
 
         return $treeBuilder;
@@ -104,5 +114,24 @@ final class Configuration implements ConfigurationInterface
         $critical = $threshold['critical'] ?? null;
 
         return \is_int($warning) && \is_int($critical) && $warning > $critical;
+    }
+
+    private function isInvalidStorageTimezone(mixed $timezone): bool
+    {
+        if (StorageTimezoneResolver::AUTO === $timezone) {
+            return false;
+        }
+
+        if (!\is_string($timezone) || '' === $timezone) {
+            return true;
+        }
+
+        try {
+            new DateTimeZone($timezone);
+        } catch (Exception) {
+            return true;
+        }
+
+        return false;
     }
 }

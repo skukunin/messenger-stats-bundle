@@ -6,12 +6,10 @@ namespace Skukunin\MessengerStatsBundle\Collector;
 
 use DateInterval;
 use DateTimeImmutable;
-use DateTimeZone;
 use Doctrine\DBAL\Connection;
 use Doctrine\DBAL\Exception\TableNotFoundException;
 use Doctrine\DBAL\Types\Types;
 use Doctrine\Persistence\ConnectionRegistry;
-use Exception;
 use Skukunin\MessengerStatsBundle\Clock\Clock;
 use Skukunin\MessengerStatsBundle\Exception\InvalidArgumentException;
 use Skukunin\MessengerStatsBundle\Report\FailedMessage;
@@ -28,6 +26,7 @@ final class DoctrineTransportStatsCollector implements StatsCollector
         private readonly ConnectionRegistry $connections,
         private readonly DoctrineDsnParser $dsnParser,
         private readonly MessageRowDecoder $messages,
+        private readonly StorageDateTimeParser $dateTimes,
         private readonly Clock $clock,
         private readonly ?int $stuckAfterSeconds,
         private readonly int $classBreakdownSampleSize,
@@ -71,10 +70,11 @@ final class DoctrineTransportStatsCollector implements StatsCollector
     private function queueStatsOf(Connection $connection, DoctrineTransportSettings $settings, string $transportName): QueueStats
     {
         $now = $this->clock->now();
-        $stuckSince = $this->stuckSince($now, $settings);
+        $storedNow = $this->dateTimes->toStorageTimezone($now);
+        $stuckSince = $this->dateTimes->toStorageTimezone($this->stuckSince($now, $settings));
 
-        $pending = $this->countOf($connection, $settings, 'delivered_at IS NULL AND available_at <= ?', [$now]);
-        $delayed = $this->countOf($connection, $settings, 'delivered_at IS NULL AND available_at > ?', [$now]);
+        $pending = $this->countOf($connection, $settings, 'delivered_at IS NULL AND available_at <= ?', [$storedNow]);
+        $delayed = $this->countOf($connection, $settings, 'delivered_at IS NULL AND available_at > ?', [$storedNow]);
         $inProgress = $this->countOf($connection, $settings, 'delivered_at IS NOT NULL AND delivered_at > ?', [$stuckSince]);
         $stuck = $this->countOf($connection, $settings, 'delivered_at IS NOT NULL AND delivered_at <= ?', [$stuckSince]);
         $total = $pending + $delayed + $inProgress + $stuck;
@@ -125,23 +125,15 @@ final class DoctrineTransportStatsCollector implements StatsCollector
     private function oldestPendingAgeSecondsOf(Connection $connection, DoctrineTransportSettings $settings, DateTimeImmutable $now): ?int
     {
         $sql = \sprintf('SELECT MIN(available_at) FROM %s WHERE queue_name = ? AND delivered_at IS NULL AND available_at <= ?', $this->tableOf($connection, $settings));
-        $oldest = $connection->executeQuery($sql, [$settings->queueName, $now], $this->parameterTypes([$now]))->fetchOne();
+        $storedNow = $this->dateTimes->toStorageTimezone($now);
+        $oldest = $connection->executeQuery($sql, [$settings->queueName, $storedNow], $this->parameterTypes([$storedNow]))->fetchOne();
         if (!\is_string($oldest) || '' === $oldest) {
             return null;
         }
 
-        $availableAt = $this->utcTimestampOf($oldest);
+        $availableAt = $this->dateTimes->parse($oldest);
 
         return null === $availableAt ? null : max(0, $now->getTimestamp() - $availableAt->getTimestamp());
-    }
-
-    private function utcTimestampOf(string $value): ?DateTimeImmutable
-    {
-        try {
-            return new DateTimeImmutable($value, new DateTimeZone('UTC'));
-        } catch (Exception) {
-            return null;
-        }
     }
 
     /**

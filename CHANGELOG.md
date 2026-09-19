@@ -16,3 +16,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `GET /stats` (JSON), `GET /health` (200/503) and `GET /metrics` (Prometheus) routes behind a bearer token and an optional IP allowlist.
 - `messenger:stats` console command with table and JSON output.
 - Tooling: PHPUnit, PHPStan, PHP CS Fixer, GrumPHP and a GitHub Actions matrix.
+- `storage_timezone` option (default `auto`): Doctrine timestamps are compared in the timezone Messenger stored them in, UTC from Messenger 6.3 and PHP's default timezone before, so pending, delayed, stuck, oldest pending age and failure times are correct on Messenger 5.4 to 6.2 hosts that do not run in UTC.

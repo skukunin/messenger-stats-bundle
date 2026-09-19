@@ -24,6 +24,7 @@ final class ConfigurationTest extends TestCase
         self::assertSame(1000, $config['class_breakdown_sample_size']);
         self::assertSame(['limit' => 10, 'expose_message' => true], $config['failures']);
         self::assertSame([], $config['thresholds']);
+        self::assertSame('auto', $config['storage_timezone']);
     }
 
     public function testEmptyTokenIsNormalisedToNull(): void
@@ -149,6 +150,45 @@ final class ConfigurationTest extends TestCase
         $this->expectException(InvalidConfigurationException::class);
 
         $this->process(['failures' => ['limit' => 0]]);
+    }
+
+    /**
+     * @dataProvider validStorageTimezones
+     */
+    public function testStorageTimezoneAcceptsAutoAndAnyTimezone(string $timezone): void
+    {
+        self::assertSame($timezone, $this->process(['storage_timezone' => $timezone])['storage_timezone']);
+    }
+
+    /**
+     * @return iterable<string, array{string}>
+     */
+    public static function validStorageTimezones(): iterable
+    {
+        foreach (['auto', 'UTC', 'Europe/Berlin', 'America/New_York'] as $timezone) {
+            yield $timezone => [$timezone];
+        }
+    }
+
+    /**
+     * @dataProvider invalidStorageTimezones
+     */
+    public function testAnInvalidStorageTimezoneIsRejected(string $timezone): void
+    {
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessage('messenger_stats.storage_timezone');
+
+        $this->process(['storage_timezone' => $timezone]);
+    }
+
+    /**
+     * @return iterable<string, array{string}>
+     */
+    public static function invalidStorageTimezones(): iterable
+    {
+        foreach (['Mars/Olympus', '', 'Auto'] as $timezone) {
+            yield '"'.$timezone.'"' => [$timezone];
+        }
     }
 
     public function testNegativeThresholdIsRejected(): void
