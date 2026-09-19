@@ -238,6 +238,41 @@ final class TransportDiscoveryPassTest extends TestCase
         self::assertSame(['async'], array_keys($this->process($container)));
     }
 
+    /**
+     * @dataProvider queueStateMetrics
+     */
+    public function testAQueueStateThresholdOnTheFailureTransportIsRejected(string $metric): void
+    {
+        $container = $this->container([], ['failed' => [$metric => ['warning' => null, 'critical' => 1]]]);
+        $this->addTransport($container, 'failed', ['doctrine://default', []], true);
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage(\sprintf('Threshold "%s" configured in "messenger_stats.thresholds" for the failure transport "failed" is not reported for a failure transport, allowed metrics are: failed, count.', $metric));
+
+        $this->process($container);
+    }
+
+    /**
+     * @return iterable<string, array{string}>
+     */
+    public static function queueStateMetrics(): iterable
+    {
+        foreach (['pending', 'delayed', 'in_progress', 'stuck', 'oldest_pending_age_seconds'] as $metric) {
+            yield $metric => [$metric];
+        }
+    }
+
+    public function testFailedAndCountThresholdsOnTheFailureTransportArePassing(): void
+    {
+        $container = $this->container([], ['failed' => [
+            'failed' => ['warning' => 1, 'critical' => 50],
+            'count' => ['warning' => null, 'critical' => 100],
+        ]]);
+        $this->addTransport($container, 'failed', ['doctrine://default', []], true);
+
+        self::assertSame(['failed'], array_keys($this->process($container)));
+    }
+
     public function testNothingHappensWhenTheBundleIsNotConfigured(): void
     {
         $container = new ContainerBuilder();

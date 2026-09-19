@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Skukunin\MessengerStatsBundle\Tests\Unit\View;
 
 use PHPUnit\Framework\TestCase;
+use Skukunin\MessengerStatsBundle\Report\ClassBreakdown;
 use Skukunin\MessengerStatsBundle\Report\HealthStatus;
 use Skukunin\MessengerStatsBundle\Report\QueueStats;
 use Skukunin\MessengerStatsBundle\Report\TransportStats;
@@ -55,17 +56,8 @@ final class JsonReportViewTest extends TestCase
                     'detail_level' => 'full',
                     'is_failure_transport' => true,
                     'count' => 7,
-                    'queues' => [
-                        'failed' => [
-                            'pending' => 7,
-                            'delayed' => 0,
-                            'in_progress' => 0,
-                            'stuck' => 0,
-                            'oldest_pending_age_seconds' => 86400,
-                            'class_breakdown' => ['App\Message\SendEmail' => 7],
-                            'class_breakdown_sampled' => false,
-                        ],
-                    ],
+                    'class_breakdown' => ['App\Message\SendEmail' => 7],
+                    'class_breakdown_sampled' => false,
                     'failures' => [
                         [
                             'message_class' => 'App\Message\SendEmail',
@@ -126,7 +118,7 @@ final class JsonReportViewTest extends TestCase
 
     public function testAFullNonFailureTransportCarriesQueuesButNoFailures(): void
     {
-        $transport = $this->renderedTransportOf(TransportStats::full('async', 'doctrine', false, [$this->queue()], []));
+        $transport = $this->renderedTransportOf(TransportStats::full('async', 'doctrine', [$this->queue()]));
 
         self::assertSame(['kind', 'detail_level', 'is_failure_transport', 'count', 'queues'], array_keys($transport));
     }
@@ -138,9 +130,9 @@ final class JsonReportViewTest extends TestCase
 
     public function testAFullFailureTransportCarriesAnEmptyFailureListRatherThanNoKey(): void
     {
-        $transport = $this->renderedTransportOf(TransportStats::full('failed', 'doctrine', true, [$this->queue()], []));
+        $transport = $this->renderedTransportOf(TransportStats::failure('failed', 'doctrine', 0, new ClassBreakdown([], false), []));
 
-        self::assertSame(['kind', 'detail_level', 'is_failure_transport', 'count', 'queues', 'failures'], array_keys($transport));
+        self::assertSame(['kind', 'detail_level', 'is_failure_transport', 'count', 'class_breakdown', 'class_breakdown_sampled', 'failures'], array_keys($transport));
         self::assertSame([], $transport['failures']);
     }
 
@@ -155,7 +147,7 @@ final class JsonReportViewTest extends TestCase
 
     public function testAnEmptyQueueKeepsTheNullAgeAndAnEmptyClassBreakdown(): void
     {
-        $transport = $this->renderedTransportOf(TransportStats::full('async', 'doctrine', false, [$this->queue()], []));
+        $transport = $this->renderedTransportOf(TransportStats::full('async', 'doctrine', [$this->queue()]));
         self::assertIsArray($transport['queues']);
         $queue = $transport['queues']['default'];
 

@@ -7,8 +7,8 @@ namespace Skukunin\MessengerStatsBundle\Tests\Unit\Http;
 use PHPUnit\Framework\TestCase;
 use Skukunin\MessengerStatsBundle\Http\NoStoreResponseFactory;
 use Skukunin\MessengerStatsBundle\Http\StatsController;
+use Skukunin\MessengerStatsBundle\Report\ClassBreakdown;
 use Skukunin\MessengerStatsBundle\Report\FailedMessage;
-use Skukunin\MessengerStatsBundle\Report\QueueStats;
 use Skukunin\MessengerStatsBundle\Report\TransportStats;
 use Skukunin\MessengerStatsBundle\Tests\Support\StatsReportBuilderFixture;
 use Skukunin\MessengerStatsBundle\View\JsonReportView;
@@ -39,9 +39,7 @@ final class StatsControllerTest extends TestCase
 
     private function failedTransport(): TransportStats
     {
-        return TransportStats::full('failed', 'doctrine', true, [
-            new QueueStats('failed', 1, 0, 0, 0, 10, ['App\Message\SendEmail' => 1], false),
-        ], [
+        return TransportStats::failure('failed', 'doctrine', 1, new ClassBreakdown(['App\Message\SendEmail' => 1], false), [
             new FailedMessage('App\Message\SendEmail', 'RuntimeException', 'Connection to tcp://db:5432/app refused', null, 0, null),
         ]);
     }

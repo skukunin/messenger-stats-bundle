@@ -67,6 +67,8 @@ final class StatsReportWiringTest extends TestCase
         $transports = $this->transportsOf($this->build());
 
         self::assertTrue($transports['failed']->isFailureTransport);
+        self::assertSame([], $transports['failed']->queues);
+        self::assertNotNull($transports['failed']->classBreakdown);
         self::assertFalse($transports['fake']->isFailureTransport);
         self::assertFalse($transports['async']->isFailureTransport);
     }

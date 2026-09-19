@@ -12,6 +12,7 @@ use Doctrine\DBAL\Types\Types;
 use Doctrine\Persistence\ConnectionRegistry;
 use Skukunin\MessengerStatsBundle\Clock\Clock;
 use Skukunin\MessengerStatsBundle\Exception\InvalidArgumentException;
+use Skukunin\MessengerStatsBundle\Report\ClassBreakdown;
 use Skukunin\MessengerStatsBundle\Report\FailedMessage;
 use Skukunin\MessengerStatsBundle\Report\QueueStats;
 use Skukunin\MessengerStatsBundle\Report\TransportStats;
@@ -45,15 +46,11 @@ final class DoctrineTransportStatsCollector implements StatsCollector
         $connection = $this->connectionOf($settings->connectionName);
 
         try {
-            return TransportStats::full(
-                $definition->name,
-                $definition->kind,
-                $definition->isFailureTransport,
-                [$this->queueStatsOf($connection, $settings, $definition->name)],
-                $definition->isFailureTransport ? $this->failuresOf($connection, $settings, $definition->name) : [],
-            );
+            return $definition->isFailureTransport
+                ? $this->failureTransportStatsOf($connection, $settings, $definition)
+                : TransportStats::full($definition->name, $definition->kind, [$this->queueStatsOf($connection, $settings, $definition->name)]);
         } catch (TableNotFoundException) {
-            return TransportStats::full($definition->name, $definition->kind, $definition->isFailureTransport, [$this->emptyQueueStatsOf($settings)], []);
+            return $this->emptyStatsOf($definition, $settings);
         }
     }
 
@@ -102,8 +99,12 @@ final class DoctrineTransportStatsCollector implements StatsCollector
     private function countOf(Connection $connection, DoctrineTransportSettings $settings, string $condition, array $parameters): int
     {
         $sql = \sprintf('SELECT COUNT(*) FROM %s WHERE queue_name = ? AND %s', $this->tableOf($connection, $settings), $condition);
-        $count = $connection->executeQuery($sql, [$settings->queueName, ...$parameters], $this->parameterTypes($parameters))->fetchOne();
 
+        return $this->intOf($connection->executeQuery($sql, [$settings->queueName, ...$parameters], $this->parameterTypes($parameters))->fetchOne());
+    }
+
+    private function intOf(mixed $count): int
+    {
         return is_numeric($count) ? (int) $count : 0;
     }
 
@@ -177,6 +178,26 @@ final class DoctrineTransportStatsCollector implements StatsCollector
         return \is_scalar($value) ? (string) $value : '';
     }
 
+    private function failureTransportStatsOf(Connection $connection, DoctrineTransportSettings $settings, TransportDefinition $definition): TransportStats
+    {
+        $count = $this->messageCountOf($connection, $settings);
+
+        return TransportStats::failure(
+            $definition->name,
+            $definition->kind,
+            $count,
+            new ClassBreakdown($this->classBreakdownOf($connection, $settings, $definition->name), $count > $this->classBreakdownSampleSize),
+            $this->failuresOf($connection, $settings, $definition->name),
+        );
+    }
+
+    private function messageCountOf(Connection $connection, DoctrineTransportSettings $settings): int
+    {
+        $sql = \sprintf('SELECT COUNT(*) FROM %s WHERE queue_name = ?', $this->tableOf($connection, $settings));
+
+        return $this->intOf($connection->executeQuery($sql, [$settings->queueName], [Types::STRING])->fetchOne());
+    }
+
     /**
      * @return list<FailedMessage>
      */
@@ -188,6 +209,13 @@ final class DoctrineTransportStatsCollector implements StatsCollector
         }
 
         return $failures;
+    }
+
+    private function emptyStatsOf(TransportDefinition $definition, DoctrineTransportSettings $settings): TransportStats
+    {
+        return $definition->isFailureTransport
+            ? TransportStats::failure($definition->name, $definition->kind, 0, new ClassBreakdown([], false), [])
+            : TransportStats::full($definition->name, $definition->kind, [$this->emptyQueueStatsOf($settings)]);
     }
 
     private function emptyQueueStatsOf(DoctrineTransportSettings $settings): QueueStats

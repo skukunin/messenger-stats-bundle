@@ -6,6 +6,7 @@ namespace Skukunin\MessengerStatsBundle\Tests\Unit\Report;
 
 use DateTimeImmutable;
 use PHPUnit\Framework\TestCase;
+use Skukunin\MessengerStatsBundle\Report\ClassBreakdown;
 use Skukunin\MessengerStatsBundle\Report\DetailLevel;
 use Skukunin\MessengerStatsBundle\Report\FailedMessage;
 use Skukunin\MessengerStatsBundle\Report\QueueStats;
@@ -15,7 +16,7 @@ final class TransportStatsTest extends TestCase
 {
     public function testFullDescribesTheTransport(): void
     {
-        $transport = TransportStats::full('async', 'doctrine', false, [$this->queue('default', 42, 3, 1, 0, 900)], []);
+        $transport = TransportStats::full('async', 'doctrine', [$this->queue('default', 42, 3, 1, 0, 900)]);
 
         self::assertSame('async', $transport->name);
         self::assertSame('doctrine', $transport->kind);
@@ -28,10 +29,10 @@ final class TransportStatsTest extends TestCase
 
     public function testFullAggregatesAcrossQueues(): void
     {
-        $transport = TransportStats::full('async', 'doctrine', false, [
+        $transport = TransportStats::full('async', 'doctrine', [
             $this->queue('payments', 42, 3, 1, 0, 900),
             $this->queue('emails', 8, 2, 4, 5, 60),
-        ], []);
+        ]);
 
         self::assertSame(50, $transport->totalPending());
         self::assertSame(5, $transport->totalDelayed());
@@ -43,24 +44,24 @@ final class TransportStatsTest extends TestCase
 
     public function testOldestPendingAgeIgnoresQueuesWithoutPendingMessages(): void
     {
-        $transport = TransportStats::full('async', 'doctrine', false, [
+        $transport = TransportStats::full('async', 'doctrine', [
             $this->queue('payments', 0, 0, 0, 0, null),
             $this->queue('emails', 8, 0, 0, 0, 60),
-        ], []);
+        ]);
 
         self::assertSame(60, $transport->maxOldestPendingAgeSeconds());
     }
 
     public function testOldestPendingAgeIsNullWithoutPendingMessages(): void
     {
-        $transport = TransportStats::full('async', 'doctrine', false, [$this->queue('payments', 0, 0, 0, 0, null)], []);
+        $transport = TransportStats::full('async', 'doctrine', [$this->queue('payments', 0, 0, 0, 0, null)]);
 
         self::assertNull($transport->maxOldestPendingAgeSeconds());
     }
 
     public function testFullWithoutQueuesIsEmpty(): void
     {
-        $transport = TransportStats::full('async', 'doctrine', false, [], []);
+        $transport = TransportStats::full('async', 'doctrine', []);
 
         self::assertSame(0, $transport->totalPending());
         self::assertSame(0, $transport->count);
@@ -69,16 +70,43 @@ final class TransportStatsTest extends TestCase
 
     public function testFailedCountIsNullOutsideTheFailureTransport(): void
     {
-        self::assertNull(TransportStats::full('async', 'doctrine', false, [$this->queue('default', 7, 0, 0, 0, 10)], [])->failedCount());
+        self::assertNull(TransportStats::full('async', 'doctrine', [$this->queue('default', 7, 0, 0, 0, 10)])->failedCount());
     }
 
-    public function testFailedCountIsTheTotalOfTheFailureTransport(): void
+    public function testAFullTransportIsNeverTheFailureTransport(): void
+    {
+        $transport = TransportStats::full('async', 'doctrine', [$this->queue('default', 7, 0, 0, 0, 10)]);
+
+        self::assertFalse($transport->isFailureTransport);
+        self::assertSame([], $transport->failures);
+        self::assertNull($transport->classBreakdown);
+    }
+
+    public function testTheFailureTransportCarriesItsCountClassBreakdownAndFailures(): void
     {
         $failure = new FailedMessage('App\Message\SendEmail', 'RuntimeException', 'Connection refused', new DateTimeImmutable('2026-09-17T10:00:00+00:00'), 3, 'async');
-        $transport = TransportStats::full('failed', 'doctrine', true, [$this->queue('failed', 7, 0, 0, 0, 86400)], [$failure]);
+        $classBreakdown = new ClassBreakdown(['App\Message\SendEmail' => 7], true);
+        $transport = TransportStats::failure('failed', 'doctrine', 7, $classBreakdown, [$failure]);
 
+        self::assertSame('failed', $transport->name);
+        self::assertSame('doctrine', $transport->kind);
+        self::assertSame(DetailLevel::Full, $transport->detailLevel);
+        self::assertTrue($transport->isFailureTransport);
+        self::assertSame(7, $transport->count);
         self::assertSame(7, $transport->failedCount());
+        self::assertSame($classBreakdown, $transport->classBreakdown);
         self::assertSame([$failure], $transport->failures);
+        self::assertSame([], $transport->queues);
+        self::assertNull($transport->error);
+        self::assertNull($transport->maxOldestPendingAgeSeconds());
+    }
+
+    public function testClassBreakdownKeepsItsCountsAndSampling(): void
+    {
+        $classBreakdown = new ClassBreakdown(['App\Message\SendEmail' => 7], true);
+
+        self::assertSame(['App\Message\SendEmail' => 7], $classBreakdown->counts);
+        self::assertTrue($classBreakdown->sampled);
     }
 
     public function testCountOnly(): void

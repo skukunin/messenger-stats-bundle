@@ -66,11 +66,13 @@ final class JsonReportView
             'count' => $transport->count,
         ];
 
-        if (DetailLevel::Full === $transport->detailLevel) {
+        if (DetailLevel::Full === $transport->detailLevel && !$transport->isFailureTransport) {
             $document['queues'] = $this->queuesOf($transport);
         }
 
         if (DetailLevel::Full === $transport->detailLevel && $transport->isFailureTransport) {
+            $document['class_breakdown'] = $transport->classBreakdown->counts ?? [];
+            $document['class_breakdown_sampled'] = $transport->classBreakdown->sampled ?? false;
             $document['failures'] = $this->failuresOf($transport);
         }
 

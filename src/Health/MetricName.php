@@ -14,4 +14,17 @@ enum MetricName: string
     case Failed = 'failed';
     case Count = 'count';
     case Up = 'up';
+
+    /**
+     * @return list<self>
+     */
+    public static function reportedForFailureTransport(): array
+    {
+        return [self::Failed, self::Count];
+    }
+
+    public function isReportedForFailureTransport(): bool
+    {
+        return \in_array($this, self::reportedForFailureTransport(), true);
+    }
 }

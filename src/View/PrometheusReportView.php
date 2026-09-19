@@ -21,6 +21,7 @@ final class PrometheusReportView
             .$this->familyOf('messenger_queue_oldest_pending_age_seconds', 'Age of the oldest pending message.', $this->queueOldestPendingAgeSamples($report, $labels))
             .$this->familyOf('messenger_queue_class_messages', 'Messages per class (sampled).', $this->queueClassSamples($report, $labels))
             .$this->familyOf('messenger_failed_messages', 'Messages in the failure transport.', $this->failedMessagesSamples($report, $labels))
+            .$this->familyOf('messenger_failed_class_messages', 'Messages per class in the failure transport (sampled).', $this->failedClassSamples($report, $labels))
             .$this->familyOf('messenger_health_status', '0 ok, 1 warning, 2 critical.', [$this->sample($labels, $report->status->severity())]);
     }
 
@@ -193,6 +194,23 @@ final class PrometheusReportView
             $failed = $transport->failedCount();
             if (null !== $failed) {
                 $samples[] = $this->sample($labels + ['transport' => $transport->name], $failed);
+            }
+        }
+
+        return $samples;
+    }
+
+    /**
+     * @param array<string, string> $labels
+     *
+     * @return list<array{labels: array<string, string>, value: int}>
+     */
+    private function failedClassSamples(StatsReport $report, array $labels): array
+    {
+        $samples = [];
+        foreach ($report->transports as $transport) {
+            foreach ($transport->classBreakdown->counts ?? [] as $class => $count) {
+                $samples[] = $this->sample($labels + ['transport' => $transport->name, 'class' => $class], $count);
             }
         }
 

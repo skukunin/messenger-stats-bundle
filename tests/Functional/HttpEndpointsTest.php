@@ -158,7 +158,7 @@ final class HttpEndpointsTest extends TestCase
         self::assertSame(['async', 'payments', 'failed', 'retry', 'env_dsn', 'fake', 'broken'], array_keys($transports));
         self::assertSame('full', $this->arrayOf($transports['async'])['detail_level']);
         self::assertSame('full', $this->arrayOf($transports['failed'])['detail_level']);
-        self::assertArrayHasKey('failures', $this->arrayOf($transports['failed']));
+        self::assertSame(['kind', 'detail_level', 'is_failure_transport', 'count', 'class_breakdown', 'class_breakdown_sampled', 'failures'], array_keys($this->arrayOf($transports['failed'])));
         self::assertSame('count', $this->arrayOf($transports['fake'])['detail_level']);
         self::assertSame('unavailable', $this->arrayOf($transports['broken'])['detail_level']);
         self::assertNull($this->arrayOf($transports['broken'])['count']);

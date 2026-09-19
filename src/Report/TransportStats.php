@@ -18,17 +18,17 @@ final class TransportStats
         public readonly ?int $count,
         public readonly array $queues,
         public readonly array $failures,
+        public readonly ?ClassBreakdown $classBreakdown,
         public readonly ?string $error,
     ) {
     }
 
     /**
-     * @param list<QueueStats>    $queues
-     * @param list<FailedMessage> $failures
+     * @param list<QueueStats> $queues
      */
-    public static function full(string $name, string $kind, bool $isFailureTransport, array $queues, array $failures): self
+    public static function full(string $name, string $kind, array $queues): self
     {
-        return new self($name, $kind, DetailLevel::Full, $isFailureTransport, self::totalOf($queues), $queues, $failures, null);
+        return new self($name, $kind, DetailLevel::Full, false, self::totalOf($queues), $queues, [], null, null);
     }
 
     /**
@@ -39,14 +39,22 @@ final class TransportStats
         return array_sum(array_map(static fn (QueueStats $queue): int => $queue->total(), $queues));
     }
 
+    /**
+     * @param list<FailedMessage> $failures
+     */
+    public static function failure(string $name, string $kind, int $count, ClassBreakdown $classBreakdown, array $failures): self
+    {
+        return new self($name, $kind, DetailLevel::Full, true, $count, [], $failures, $classBreakdown, null);
+    }
+
     public static function countOnly(string $name, string $kind, bool $isFailureTransport, ?int $count): self
     {
-        return new self($name, $kind, DetailLevel::Count, $isFailureTransport, $count, [], [], null);
+        return new self($name, $kind, DetailLevel::Count, $isFailureTransport, $count, [], [], null, null);
     }
 
     public static function unavailable(string $name, string $kind, bool $isFailureTransport, string $error): self
     {
-        return new self($name, $kind, DetailLevel::Unavailable, $isFailureTransport, null, [], [], $error);
+        return new self($name, $kind, DetailLevel::Unavailable, $isFailureTransport, null, [], [], null, $error);
     }
 
     public function totalPending(): int

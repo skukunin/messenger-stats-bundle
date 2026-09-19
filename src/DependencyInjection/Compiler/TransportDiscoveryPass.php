@@ -7,6 +7,7 @@ namespace Skukunin\MessengerStatsBundle\DependencyInjection\Compiler;
 use Skukunin\MessengerStatsBundle\Collector\CountOnlyStatsCollector;
 use Skukunin\MessengerStatsBundle\Collector\EnvelopeDecoder;
 use Skukunin\MessengerStatsBundle\Exception\InvalidArgumentException;
+use Skukunin\MessengerStatsBundle\Health\MetricName;
 use Skukunin\MessengerStatsBundle\Transport\TransportKind;
 use Symfony\Component\DependencyInjection\Compiler\CompilerPassInterface;
 use Symfony\Component\DependencyInjection\Compiler\ServiceLocatorTagPass;
@@ -32,6 +33,7 @@ final class TransportDiscoveryPass implements CompilerPassInterface
 
         $transports = $this->discover($container);
         $this->assertThresholdsAreKnown($container, $transports);
+        $this->assertFailureTransportThresholdsAreReported($container, $transports);
 
         $container->setParameter(self::TRANSPORTS_PARAMETER, $transports);
         $this->registerSerializerLocator($container, $transports);
@@ -160,6 +162,29 @@ final class TransportDiscoveryPass implements CompilerPassInterface
         foreach (array_keys($thresholds) as $name) {
             if (!isset($transports[$name])) {
                 throw new InvalidArgumentException(\sprintf('Unknown transport "%s" configured in "%s", known transports are: %s.', (string) $name, self::THRESHOLDS_PARAMETER, [] === $transports ? 'none' : implode(', ', array_keys($transports))));
+            }
+        }
+    }
+
+    /**
+     * @param array<string, array{dsn: string, options: array<string, mixed>, kind: string, is_failure_transport: bool, serializer: string}> $transports
+     */
+    private function assertFailureTransportThresholdsAreReported(ContainerBuilder $container, array $transports): void
+    {
+        $thresholds = $container->getParameter(self::THRESHOLDS_PARAMETER);
+        if (!\is_array($thresholds)) {
+            return;
+        }
+
+        foreach ($thresholds as $name => $metrics) {
+            if (!\is_array($metrics) || !($transports[$name]['is_failure_transport'] ?? false)) {
+                continue;
+            }
+
+            foreach (array_keys($metrics) as $metric) {
+                if (!MetricName::from((string) $metric)->isReportedForFailureTransport()) {
+                    throw new InvalidArgumentException(\sprintf('Threshold "%s" configured in "%s" for the failure transport "%s" is not reported for a failure transport, allowed metrics are: %s.', (string) $metric, self::THRESHOLDS_PARAMETER, (string) $name, implode(', ', array_map(static fn (MetricName $allowed): string => $allowed->value, MetricName::reportedForFailureTransport()))));
+                }
             }
         }
     }

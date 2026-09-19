@@ -8,6 +8,7 @@ use DateTimeImmutable;
 use PHPUnit\Framework\TestCase;
 use Skukunin\MessengerStatsBundle\Console\StatsCommand;
 use Skukunin\MessengerStatsBundle\Console\TableRenderer;
+use Skukunin\MessengerStatsBundle\Report\ClassBreakdown;
 use Skukunin\MessengerStatsBundle\Report\FailedMessage;
 use Skukunin\MessengerStatsBundle\Report\QueueStats;
 use Skukunin\MessengerStatsBundle\Report\StatsReportBuilder;
@@ -35,12 +36,10 @@ final class StatsCommandTest extends TestCase
     private function criticalBuilder(): StatsReportBuilder
     {
         return StatsReportBuilderFixture::returningAll([
-            TransportStats::full('async_payments', 'doctrine', false, [
+            TransportStats::full('async_payments', 'doctrine', [
                 new QueueStats('payments', 42, 3, 1, 0, 900, ['App\Message\RecurringPaymentMessage' => 46], false),
-            ], []),
-            TransportStats::full('failed', 'doctrine', true, [
-                new QueueStats('failed', 7, 0, 0, 0, 86400, ['App\Message\SendEmail' => 7], false),
-            ], [
+            ]),
+            TransportStats::failure('failed', 'doctrine', 7, new ClassBreakdown(['App\Message\SendEmail' => 7], false), [
                 new FailedMessage(
                     'App\Message\SendEmail',
                     'Symfony\Component\Mailer\Exception\TransportException',

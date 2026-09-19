@@ -13,7 +13,7 @@ The source of statistics for one Transport. Each Transport is served by exactly 
 How much a Stats Collector can report for a Transport: `count` (only the number of messages) or `full` (per-queue breakdown, ages, message classes, failures). v1: Doctrine transports are `full`, all others `count`.
 
 ## Failure Transport
-The Transport the host configured as `failure_transport`. Messages there are Failed Messages.
+The Transport the host configured as `failure_transport`. Messages there are Failed Messages. Reported as a count, a Class Breakdown and the newest Failed Messages; it has no Message States, because nothing consumes it automatically.
 
 ## Message States (Doctrine, `full` Detail Level)
 - **Pending** — not yet delivered and available now (`available_at <= now`, `delivered_at` empty).
@@ -55,7 +55,7 @@ Optional host-side rule on one metric of one Transport: a warning value and a cr
 One breached Threshold: transport, metric, observed value, threshold value, level.
 
 ## Class Breakdown
-Count of messages per message class within a Queue, computed from at most a Sample Size of the newest messages. Marked as sampled when the Queue is larger than the Sample Size.
+Count of messages per message class within a Queue (or within the Failure Transport), computed from at most a Sample Size of the newest messages. Marked as sampled when the Queue is larger than the Sample Size.
 
 ## Report View
 One rendering of a Stats Report: JSON, Health (status code only) or Metrics (Prometheus exposition). All views are built from the same Stats Report.

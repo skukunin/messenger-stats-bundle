@@ -98,6 +98,16 @@ final class TransportDiscoveryTest extends TestCase
         $this->kernel->boot();
     }
 
+    public function testAQueueStateThresholdOnTheFailureTransportFailsTheBoot(): void
+    {
+        $this->kernel = new TestKernel(['thresholds' => ['failed' => ['stuck' => ['critical' => 1]]]]);
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('Threshold "stuck" configured in "messenger_stats.thresholds" for the failure transport "failed" is not reported for a failure transport, allowed metrics are: failed, count.');
+
+        $this->kernel->boot();
+    }
+
     public function testThresholdOnAnExcludedTransportFailsTheBoot(): void
     {
         $this->kernel = new TestKernel(['exclude' => ['retry'], 'thresholds' => ['retry' => ['pending' => ['critical' => 1]]]]);

@@ -312,7 +312,8 @@ abstract class DoctrineTransportStatsCollectorTestCase extends TestCase
 
         $stats = $this->collector()->collect($this->definition(isFailureTransport: true));
 
-        self::assertSame([MessageRowDecoder::UNKNOWN_MESSAGE_CLASS => 1], $this->onlyQueue($stats)->classBreakdown);
+        self::assertNotNull($stats->classBreakdown);
+        self::assertSame([MessageRowDecoder::UNKNOWN_MESSAGE_CLASS => 1], $stats->classBreakdown->counts);
         self::assertCount(1, $stats->failures);
         self::assertSame(MessageRowDecoder::UNKNOWN_MESSAGE_CLASS, $stats->failures[0]->messageClass);
         self::assertNull($stats->failures[0]->exceptionClass);
@@ -423,12 +424,61 @@ abstract class DoctrineTransportStatsCollectorTestCase extends TestCase
 
     public function testAMissingTableIsReportedWithZeroes(): void
     {
-        $stats = $this->collector()->collect($this->definition('doctrine://default?queue_name=payments', true));
+        $stats = $this->collector()->collect($this->definition('doctrine://default?queue_name=payments'));
 
         self::assertSame(DetailLevel::Full, $stats->detailLevel);
         self::assertSame(0, $stats->count);
         self::assertSame([], $stats->failures);
         $this->assertZeroQueue($this->onlyQueue($stats), 'payments');
+    }
+
+    public function testAMissingTableIsReportedAsAnEmptyFailureTransport(): void
+    {
+        $stats = $this->collector()->collect($this->definition('doctrine://default?queue_name=failed', true));
+
+        self::assertSame(DetailLevel::Full, $stats->detailLevel);
+        self::assertTrue($stats->isFailureTransport);
+        self::assertSame(0, $stats->count);
+        self::assertSame([], $stats->queues);
+        self::assertSame([], $stats->failures);
+        self::assertNotNull($stats->classBreakdown);
+        self::assertSame([], $stats->classBreakdown->counts);
+        self::assertFalse($stats->classBreakdown->sampled);
+    }
+
+    public function testTheFailureTransportIsReportedAsACountWithAClassBreakdownAndNoQueues(): void
+    {
+        $transport = $this->transport();
+        $this->send($transport, new SendInvoice());
+        $this->markDelivered($this->send($transport, new SendInvoice()), 900);
+        $this->send($transport, new RebuildIndex(), new DelayStamp(3_600_000));
+
+        $stats = $this->collector()->collect($this->definition(isFailureTransport: true));
+
+        self::assertSame(DetailLevel::Full, $stats->detailLevel);
+        self::assertTrue($stats->isFailureTransport);
+        self::assertSame(3, $stats->count);
+        self::assertSame(3, $stats->failedCount());
+        self::assertSame([], $stats->queues);
+        self::assertNotNull($stats->classBreakdown);
+        self::assertSame([RebuildIndex::class => 1, SendInvoice::class => 2], $stats->classBreakdown->counts);
+        self::assertFalse($stats->classBreakdown->sampled);
+        self::assertCount(3, $stats->failures);
+    }
+
+    public function testTheClassBreakdownOfTheFailureTransportIsSampled(): void
+    {
+        $transport = $this->transport();
+        $this->send($transport, new SendInvoice());
+        $this->send($transport, new SendInvoice());
+        $this->send($transport, new RebuildIndex());
+
+        $stats = $this->collector(300, 2)->collect($this->definition(isFailureTransport: true));
+
+        self::assertSame(3, $stats->count);
+        self::assertNotNull($stats->classBreakdown);
+        self::assertSame([RebuildIndex::class => 1, SendInvoice::class => 1], $stats->classBreakdown->counts);
+        self::assertTrue($stats->classBreakdown->sampled);
     }
 
     public function testTheReportedCountIsTheSumOfEveryState(): void

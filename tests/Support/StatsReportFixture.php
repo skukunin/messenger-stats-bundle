@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Skukunin\MessengerStatsBundle\Tests\Support;
 
 use DateTimeImmutable;
+use Skukunin\MessengerStatsBundle\Report\ClassBreakdown;
 use Skukunin\MessengerStatsBundle\Report\FailedMessage;
 use Skukunin\MessengerStatsBundle\Report\HealthStatus;
 use Skukunin\MessengerStatsBundle\Report\Problem;
@@ -32,12 +33,10 @@ final class StatsReportFixture
             HealthStatus::Critical,
             [new Problem('async_payments', 'oldest_pending_age_seconds', 900, 600, ProblemLevel::Critical)],
             [
-                TransportStats::full('async_payments', 'doctrine', false, [
+                TransportStats::full('async_payments', 'doctrine', [
                     new QueueStats('payments', 42, 3, 1, 0, 900, ['App\Message\RecurringPaymentMessage' => 46], false),
-                ], []),
-                TransportStats::full('failed', 'doctrine', true, [
-                    new QueueStats('failed', 7, 0, 0, 0, 86400, ['App\Message\SendEmail' => 7], false),
-                ], [
+                ]),
+                TransportStats::failure('failed', 'doctrine', 7, new ClassBreakdown(['App\Message\SendEmail' => 7], false), [
                     new FailedMessage(
                         'App\Message\SendEmail',
                         'Symfony\Component\Mailer\Exception\TransportException',

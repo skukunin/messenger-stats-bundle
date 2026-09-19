@@ -76,7 +76,12 @@ Allowed `<metric>` values and what they compare against:
 | `count` | total messages (the only metric available at Detail Level `count`) |
 
 A level is breached when `value >= threshold`. Unknown transport names or
-metrics fail container compilation.
+metrics fail container compilation. The Failure Transport reports no Message
+States (§4), so only `failed` and `count` are allowed on it: `pending`,
+`delayed`, `in_progress`, `stuck` or `oldest_pending_age_seconds` configured
+for a Failure Transport fail container compilation in
+`TransportDiscoveryPass` with a message naming the transport and the allowed
+metrics.
 
 ### 3.2 Storage timezone
 
@@ -120,9 +125,14 @@ TransportStats
   detailLevel: DetailLevel     # full|count|unavailable
   isFailureTransport: bool
   count: ?int                  # null when unavailable
-  queues: QueueStats[]         # full only
-  failures: FailedMessage[]    # full + failure transport only
+  queues: QueueStats[]         # full, not the failure transport
+  classBreakdown: ?ClassBreakdown  # full failure transport only
+  failures: FailedMessage[]    # full failure transport only
   error: ?string               # unavailable only; exception class
+
+ClassBreakdown
+  counts: array<string,int>    # class => count
+  sampled: bool
 
 QueueStats
   name: string
@@ -147,6 +157,11 @@ Problem
 
 Rules:
 
+- A `full` Transport is built with `TransportStats::full()` from its Queues; a
+  `full` Failure Transport with `TransportStats::failure()` from its count,
+  Class Breakdown and Failed Messages, and carries no Queue. Nobody consumes
+  the Failure Transport automatically, so a per-state breakdown would only
+  repeat its count as Pending.
 - `status` is the worst level among `problems`; `ok` when none.
 - An Unavailable Transport contributes a Problem with level `critical` if any
   threshold is configured for that transport, otherwise `warning`, with
@@ -180,6 +195,11 @@ of rejected:
 | Oldest Pending Age | `now - MIN(available_at)` over Pending rows |
 | Class Breakdown | `SELECT body, headers FROM ... WHERE queue_name = ? ORDER BY id DESC LIMIT sample_size`; decode each row (see below); `sampled = (rows fetched == sample_size AND total count > sample_size)` |
 | Failures | `SELECT body, headers, created_at FROM ... WHERE queue_name = ? ORDER BY id DESC LIMIT failures.limit` on the Failure Transport |
+
+On the Failure Transport only three queries run: the count
+(`COUNT(*) WHERE queue_name = ?`), the Class Breakdown (sampled against that
+count) and the Failures. The four state counts and the Oldest Pending Age are
+not queried.
 
 A row is decoded by the Message Row Decoder, which is a hybrid: when the
 `headers` column carries a non-empty `type` header the row is read from the
@@ -254,12 +274,15 @@ Each Doctrine transport is queried on its own connection, resolved through
 `ConnectionRegistry`. If the transport uses `auto_setup` and the table does
 not exist yet, the transport is reported as full detail with one zeroed
 Queue named after its `queue_name` and no failures, not as unavailable; the
-Queue is still listed so the Prometheus series stay stable. Any other
+Queue is still listed so the Prometheus series stay stable. A Failure
+Transport on a missing table is reported with count 0, an empty unsampled
+Class Breakdown and no failures. Any other
 failure propagates and is turned into an Unavailable Transport by the Stats
 Report Builder.
 
 A Doctrine transport definition addresses exactly one `queue_name`, so its
-`queues` list always holds exactly one entry.
+`queues` list always holds exactly one entry, except on the Failure
+Transport, which has none.
 
 ## 6. Transport discovery (compile time)
 
@@ -371,7 +394,8 @@ the event stops the propagation of `kernel.request` by itself.
       "detail_level": "full",
       "is_failure_transport": true,
       "count": 7,
-      "queues": { "failed": { "pending": 7, "delayed": 0, "in_progress": 0, "stuck": 0, "oldest_pending_age_seconds": 86400, "class_breakdown": {"App\\Message\\SendEmail": 7}, "class_breakdown_sampled": false } },
+      "class_breakdown": {"App\\Message\\SendEmail": 7},
+      "class_breakdown_sampled": false,
       "failures": [
         {"message_class": "App\\Message\\SendEmail", "exception_class": "Symfony\\Component\\Mailer\\Exception\\TransportException", "exception_message": "Connection refused", "failed_at": "2026-09-17T10:00:00+00:00", "retry_count": 3, "original_transport": "async"}
       ]
@@ -394,9 +418,11 @@ the event stops the propagation of `kernel.request` by itself.
 ```
 
 Dates are RFC 3339 in UTC. Keys absent for a Detail Level are omitted, not
-null, except `count`: a `full` Transport carries `queues`, a `full` Failure
-Transport carries `failures` as well — as `[]` when there is none — and an
-Unavailable Transport carries `error`. Slashes are not escaped in the body.
+null, except `count`: a `full` Transport carries `queues`; a `full` Failure
+Transport carries `class_breakdown`, `class_breakdown_sampled` and `failures`
+— as `[]` when there is none — and no `queues`; an Unavailable Transport
+carries `error`. Slashes are not escaped in the body. `schema_version` stays
+`"1"`: the Failure Transport shape changed before any release.
 
 `class_breakdown` and `transports` are JSON-encoded from PHP arrays, so an
 empty one is written `[]`, not `{}`; an empty Class Breakdown is what a
@@ -434,6 +460,9 @@ messenger_queue_class_messages{app="shop",env="prod",transport="async_payments",
 # HELP messenger_failed_messages Messages in the failure transport.
 # TYPE messenger_failed_messages gauge
 messenger_failed_messages{app="shop",env="prod",transport="failed"} 7
+# HELP messenger_failed_class_messages Messages per class in the failure transport (sampled).
+# TYPE messenger_failed_class_messages gauge
+messenger_failed_class_messages{app="shop",env="prod",transport="failed",class="App\\Message\\SendEmail"} 7
 # HELP messenger_health_status 0 ok, 1 warning, 2 critical.
 # TYPE messenger_health_status gauge
 messenger_health_status{app="shop",env="prod"} 2
@@ -445,7 +474,10 @@ metric family without a single sample is omitted with its `# HELP` and
 `# TYPE` lines, so a report holding only `count` Transports exposes no
 `messenger_queue_*` family at all; `messenger_health_status` is always
 exposed. `messenger_failed_messages` follows the Failure Transport's `count`,
-whatever its Detail Level. Failure details are not exported as metrics.
+whatever its Detail Level. The Failure Transport has no Queue, so it
+contributes no `messenger_queue_*` sample; its Class Breakdown is exported as
+`messenger_failed_class_messages{transport,class}`, without a `queue` label.
+Failure details are not exported as metrics.
 
 Label values escape `\` as `\\`, `"` as `\"` and a newline as `\n`; `app` and
 `env` come first in every sample. The exposition ends with a newline.
@@ -483,7 +515,7 @@ row per Transport shape:
 
 | Detail Level | Rows |
 |---|---|
-| `full` | one row per Queue; the Transport name is written on the first Queue row only, `Count` repeats the Transport total on every row. A `full` Transport without a Queue is rendered like a `count` one |
+| `full` | one row per Queue; the Transport name is written on the first Queue row only, `Count` repeats the Transport total on every row. A `full` Transport without a Queue — the Failure Transport among them — is rendered like a `count` one: `-` in `Queue` and the five state columns, the count in `Count` |
 | `count` | one row, `-` in `Queue` and in the five state columns, the message count in `Count` |
 | `unavailable` | one row, `unavailable: <exception class>` in `Queue`, `-` in the five state columns, `Count` empty |
 
@@ -529,7 +561,7 @@ src/
     EnvelopeDecoder.php              # decodes through the transport's own serializer
     StorageDateTimeParser.php        # naive storage timestamps in the Storage Timezone -> UTC
   Report/
-    StatsReport.php, TransportStats.php, QueueStats.php, FailedMessage.php,
+    StatsReport.php, TransportStats.php, QueueStats.php, ClassBreakdown.php, FailedMessage.php,
     Problem.php, HealthStatus.php (enum), DetailLevel.php (enum)
     ApplicationIdentity.php          # app name and env of the host application
     ApplicationIdentityFactory.php   # app_name ?: basename(kernel.project_dir)

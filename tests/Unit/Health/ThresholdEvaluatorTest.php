@@ -8,6 +8,7 @@ use PHPUnit\Framework\TestCase;
 use Skukunin\MessengerStatsBundle\Health\EvaluationResult;
 use Skukunin\MessengerStatsBundle\Health\ThresholdEvaluator;
 use Skukunin\MessengerStatsBundle\Health\ThresholdSet;
+use Skukunin\MessengerStatsBundle\Report\ClassBreakdown;
 use Skukunin\MessengerStatsBundle\Report\HealthStatus;
 use Skukunin\MessengerStatsBundle\Report\ProblemLevel;
 use Skukunin\MessengerStatsBundle\Report\QueueStats;
@@ -87,10 +88,10 @@ final class ThresholdEvaluatorTest extends TestCase
      */
     public function testEveryMetricOfAFullTransportIsEvaluated(string $metric, int $expectedValue): void
     {
-        $transport = TransportStats::full('async', 'doctrine', true, [
+        $transport = TransportStats::full('async', 'doctrine', [
             new QueueStats('payments', 42, 3, 1, 2, 900, [], false),
             new QueueStats('emails', 8, 4, 5, 6, 60, [], false),
-        ], []);
+        ]);
 
         $result = $this->evaluate(['async' => [$metric => ['warning' => null, 'critical' => 1]]], [$transport]);
 
@@ -109,8 +110,41 @@ final class ThresholdEvaluatorTest extends TestCase
         yield 'in_progress' => ['in_progress', 6];
         yield 'stuck' => ['stuck', 8];
         yield 'oldest_pending_age_seconds' => ['oldest_pending_age_seconds', 900];
-        yield 'failed' => ['failed', 71];
         yield 'count' => ['count', 71];
+    }
+
+    /**
+     * @dataProvider failureTransportMetrics
+     */
+    public function testTheFailedAndCountMetricsOfTheFailureTransportAreItsCount(string $metric): void
+    {
+        $transport = TransportStats::failure('failed', 'doctrine', 12, new ClassBreakdown(['App\Message\SendEmail' => 12], false), []);
+
+        $result = $this->evaluate(['failed' => [$metric => ['warning' => 1, 'critical' => 50]]], [$transport]);
+
+        self::assertSame(HealthStatus::Warning, $result->status);
+        self::assertCount(1, $result->problems);
+        self::assertSame($metric, $result->problems[0]->metric);
+        self::assertSame(12, $result->problems[0]->value);
+    }
+
+    /**
+     * @return iterable<string, array{string}>
+     */
+    public static function failureTransportMetrics(): iterable
+    {
+        yield 'failed' => ['failed'];
+        yield 'count' => ['count'];
+    }
+
+    public function testQueueStateMetricsAreNotEvaluatedOnTheFailureTransport(): void
+    {
+        $transport = TransportStats::failure('failed', 'doctrine', 12, new ClassBreakdown([], false), []);
+
+        $result = $this->evaluate(['failed' => ['pending' => ['warning' => null, 'critical' => 0]]], [$transport]);
+
+        self::assertSame(HealthStatus::Ok, $result->status);
+        self::assertSame([], $result->problems);
     }
 
     public function testFailedIsSkippedOutsideTheFailureTransport(): void
@@ -123,7 +157,7 @@ final class ThresholdEvaluatorTest extends TestCase
 
     public function testOldestPendingAgeIsSkippedWhenUnknown(): void
     {
-        $transport = TransportStats::full('async', 'doctrine', false, [new QueueStats('default', 0, 0, 0, 0, null, [], false)], []);
+        $transport = TransportStats::full('async', 'doctrine', [new QueueStats('default', 0, 0, 0, 0, null, [], false)]);
 
         $result = $this->evaluate(['async' => ['oldest_pending_age_seconds' => ['warning' => null, 'critical' => 0]]], [$transport]);
 
@@ -229,7 +263,7 @@ final class ThresholdEvaluatorTest extends TestCase
 
     private function fullTransport(int $pending): TransportStats
     {
-        return TransportStats::full('async', 'doctrine', false, [new QueueStats('default', $pending, 0, 0, 0, 10, [], false)], []);
+        return TransportStats::full('async', 'doctrine', [new QueueStats('default', $pending, 0, 0, 0, 10, [], false)]);
     }
 
     /**

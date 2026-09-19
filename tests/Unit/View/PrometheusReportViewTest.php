@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Skukunin\MessengerStatsBundle\Tests\Unit\View;
 
 use PHPUnit\Framework\TestCase;
+use Skukunin\MessengerStatsBundle\Report\ClassBreakdown;
 use Skukunin\MessengerStatsBundle\Report\HealthStatus;
 use Skukunin\MessengerStatsBundle\Report\QueueStats;
 use Skukunin\MessengerStatsBundle\Report\TransportStats;
@@ -33,21 +34,18 @@ final class PrometheusReportViewTest extends TestCase
             messenger_queue_messages{app="shop",env="prod",transport="async_payments",queue="payments",state="delayed"} 3
             messenger_queue_messages{app="shop",env="prod",transport="async_payments",queue="payments",state="in_progress"} 1
             messenger_queue_messages{app="shop",env="prod",transport="async_payments",queue="payments",state="stuck"} 0
-            messenger_queue_messages{app="shop",env="prod",transport="failed",queue="failed",state="pending"} 7
-            messenger_queue_messages{app="shop",env="prod",transport="failed",queue="failed",state="delayed"} 0
-            messenger_queue_messages{app="shop",env="prod",transport="failed",queue="failed",state="in_progress"} 0
-            messenger_queue_messages{app="shop",env="prod",transport="failed",queue="failed",state="stuck"} 0
             # HELP messenger_queue_oldest_pending_age_seconds Age of the oldest pending message.
             # TYPE messenger_queue_oldest_pending_age_seconds gauge
             messenger_queue_oldest_pending_age_seconds{app="shop",env="prod",transport="async_payments",queue="payments"} 900
-            messenger_queue_oldest_pending_age_seconds{app="shop",env="prod",transport="failed",queue="failed"} 86400
             # HELP messenger_queue_class_messages Messages per class (sampled).
             # TYPE messenger_queue_class_messages gauge
             messenger_queue_class_messages{app="shop",env="prod",transport="async_payments",queue="payments",class="App\\Message\\RecurringPaymentMessage"} 46
-            messenger_queue_class_messages{app="shop",env="prod",transport="failed",queue="failed",class="App\\Message\\SendEmail"} 7
             # HELP messenger_failed_messages Messages in the failure transport.
             # TYPE messenger_failed_messages gauge
             messenger_failed_messages{app="shop",env="prod",transport="failed"} 7
+            # HELP messenger_failed_class_messages Messages per class in the failure transport (sampled).
+            # TYPE messenger_failed_class_messages gauge
+            messenger_failed_class_messages{app="shop",env="prod",transport="failed",class="App\\Message\\SendEmail"} 7
             # HELP messenger_health_status 0 ok, 1 warning, 2 critical.
             # TYPE messenger_health_status gauge
             messenger_health_status{app="shop",env="prod"} 2
@@ -88,9 +86,28 @@ final class PrometheusReportViewTest extends TestCase
         self::assertStringNotContainsString('messenger_failed_messages', $exposition);
     }
 
+    public function testTheFailureTransportExportsItsCountAndClassesButNoQueueSeries(): void
+    {
+        $exposition = $this->render([TransportStats::failure('failed', 'doctrine', 3, new ClassBreakdown(['App\Message\SendEmail' => 3], true), [])]);
+
+        self::assertStringContainsString('messenger_transport_up{app="shop",env="prod",transport="failed"} 1'."\n", $exposition);
+        self::assertStringContainsString('messenger_transport_messages{app="shop",env="prod",transport="failed"} 3'."\n", $exposition);
+        self::assertStringContainsString('messenger_failed_messages{app="shop",env="prod",transport="failed"} 3'."\n", $exposition);
+        self::assertStringContainsString('messenger_failed_class_messages{app="shop",env="prod",transport="failed",class="App\\\\Message\\\\SendEmail"} 3'."\n", $exposition);
+        self::assertStringNotContainsString('messenger_queue_', $exposition);
+    }
+
+    public function testAnEmptyFailureTransportExportsNoClassFamily(): void
+    {
+        $exposition = $this->render([TransportStats::failure('failed', 'doctrine', 0, new ClassBreakdown([], false), [])]);
+
+        self::assertStringContainsString('messenger_failed_messages{app="shop",env="prod",transport="failed"} 0'."\n", $exposition);
+        self::assertStringNotContainsString('messenger_failed_class_messages', $exposition);
+    }
+
     public function testAQueueWithoutPendingMessagesExportsNoAgeSample(): void
     {
-        $exposition = $this->render([TransportStats::full('async', 'doctrine', false, [new QueueStats('default', 0, 0, 0, 0, null, [], false)], [])]);
+        $exposition = $this->render([TransportStats::full('async', 'doctrine', [new QueueStats('default', 0, 0, 0, 0, null, [], false)])]);
 
         self::assertStringContainsString('messenger_queue_messages{app="shop",env="prod",transport="async",queue="default",state="pending"} 0', $exposition);
         self::assertStringNotContainsString('messenger_queue_oldest_pending_age_seconds', $exposition);
@@ -100,7 +117,7 @@ final class PrometheusReportViewTest extends TestCase
     public function testLabelValuesAreEscaped(): void
     {
         $queue = new QueueStats('say "hi"', 1, 0, 0, 0, null, ['App\Message\Send'."\n".'Mail' => 1], false);
-        $exposition = $this->render([TransportStats::full('async', 'doctrine', false, [$queue], [])]);
+        $exposition = $this->render([TransportStats::full('async', 'doctrine', [$queue])]);
 
         self::assertStringContainsString('queue="say \"hi\"",state="pending"} 1', $exposition);
         self::assertStringContainsString('class="App\\\\Message\\\\Send\nMail"} 1', $exposition);

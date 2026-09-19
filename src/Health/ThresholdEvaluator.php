@@ -66,6 +66,10 @@ final class ThresholdEvaluator
             return MetricName::Count === $metric ? $transport->count : null;
         }
 
+        if ($transport->isFailureTransport && !$metric->isReportedForFailureTransport()) {
+            return null;
+        }
+
         return match ($metric) {
             MetricName::Pending => $transport->totalPending(),
             MetricName::Delayed => $transport->totalDelayed(),

@@ -27,9 +27,11 @@ For every Doctrine transport (`doctrine://…`), per queue:
   the best signal that no worker is running
 - **class_breakdown** — messages per message class, sampled on big queues
 
-For the failure transport, the last N failed messages with message class,
-exception class and message, failure time, retry count and original transport.
-Message bodies and stack traces are never exposed.
+For the failure transport, the message count, the class breakdown and the
+last N failed messages with message class, exception class and message,
+failure time, retry count and original transport. It has no per-state
+breakdown: nothing consumes it automatically, so every message would only
+show up as "pending". Message bodies and stack traces are never exposed.
 
 For any other transport (AMQP, Redis, SQS, Beanstalkd, …) the bundle reports
 the message count when the transport supports it, and nothing else.
@@ -173,7 +175,10 @@ The report gains `status` (`ok`, `warning`, `critical`) and a `problems` list,
 Available metrics per transport: `pending`, `delayed`, `in_progress`, `stuck`,
 `oldest_pending_age_seconds`, `failed` (only meaningful on the failure
 transport) and `count` (the only one available for non-Doctrine transports).
-A threshold on a transport that does not exist fails container compilation.
+On the failure transport only `failed` and `count` are allowed. A threshold on
+a transport that does not exist, or a `pending`, `delayed`, `in_progress`,
+`stuck` or `oldest_pending_age_seconds` threshold on the failure transport,
+fails container compilation.
 
 An `unavailable` transport counts as `critical` when it has thresholds
 configured and as `warning` otherwise.
@@ -214,7 +219,8 @@ configured and as `warning` otherwise.
       "detail_level": "full",
       "is_failure_transport": true,
       "count": 7,
-      "queues": {"failed": {"pending": 7, "delayed": 0, "in_progress": 0, "stuck": 0, "oldest_pending_age_seconds": 86400, "class_breakdown": {"App\\Message\\SendEmail": 7}, "class_breakdown_sampled": false}},
+      "class_breakdown": {"App\\Message\\SendEmail": 7},
+      "class_breakdown_sampled": false,
       "failures": [
         {"message_class": "App\\Message\\SendEmail", "exception_class": "Symfony\\Component\\Mailer\\Exception\\TransportException", "exception_message": "Connection refused", "failed_at": "2026-09-17T10:00:00+00:00", "retry_count": 3, "original_transport": "async"}
       ]
@@ -277,6 +283,7 @@ Exposed families, all gauges with `app` and `env` labels:
 | `messenger_queue_oldest_pending_age_seconds` | `transport`, `queue` | age of the oldest pending message |
 | `messenger_queue_class_messages` | `transport`, `queue`, `class` | messages per class, sampled |
 | `messenger_failed_messages` | `transport` | messages in the failure transport |
+| `messenger_failed_class_messages` | `transport`, `class` | messages per class in the failure transport, sampled |
 | `messenger_health_status` | | 0 ok, 1 warning, 2 critical |
 
 Example alert rules:
@@ -307,7 +314,7 @@ App: shop  Env: prod  Generated: 2026-09-18T10:00:00+00:00  Status: critical
 | Transport      | Kind     | Detail      | Queue    | Pending | Delayed | In progress | Stuck | Oldest pending (s) | Count |
 +----------------+----------+-------------+----------+---------+---------+-------------+-------+--------------------+-------+
 | async_payments | doctrine | full        | payments | 42      | 3       | 1           | 0     | 900                | 46    |
-| failed         | doctrine | full        | failed   | 7       | 0       | 0           | 0     | 86400              | 7     |
+| failed         | doctrine | full        | -        | -       | -       | -           | -     | -                  | 7     |
 | events         | amqp     | count       | -        | -       | -       | -           | -     | -                  | 12    |
 +----------------+----------+-------------+----------+---------+---------+-------------+-------+--------------------+-------+
 
