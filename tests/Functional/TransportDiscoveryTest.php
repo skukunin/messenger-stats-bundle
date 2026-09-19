@@ -90,32 +90,32 @@ final class TransportDiscoveryTest extends TestCase
 
     public function testThresholdOnAnUnknownTransportFailsTheBoot(): void
     {
-        $this->kernel = new TestKernel(['thresholds' => ['nonexistent' => ['pending' => ['critical' => 1]]]]);
+        $kernel = $this->kernel = new TestKernel(['thresholds' => ['nonexistent' => ['pending' => ['critical' => 1]]]]);
 
         $this->expectException(InvalidArgumentException::class);
         $this->expectExceptionMessage('Unknown transport "nonexistent" configured in "messenger_stats.thresholds"');
 
-        $this->kernel->boot();
+        $kernel->boot();
     }
 
     public function testAQueueStateThresholdOnTheFailureTransportFailsTheBoot(): void
     {
-        $this->kernel = new TestKernel(['thresholds' => ['failed' => ['stuck' => ['critical' => 1]]]]);
+        $kernel = $this->kernel = new TestKernel(['thresholds' => ['failed' => ['stuck' => ['critical' => 1]]]]);
 
         $this->expectException(InvalidArgumentException::class);
         $this->expectExceptionMessage('Threshold "stuck" configured in "messenger_stats.thresholds" for the failure transport "failed" is not reported for a failure transport, allowed metrics are: failed, count.');
 
-        $this->kernel->boot();
+        $kernel->boot();
     }
 
     public function testThresholdOnAnExcludedTransportFailsTheBoot(): void
     {
-        $this->kernel = new TestKernel(['exclude' => ['retry'], 'thresholds' => ['retry' => ['pending' => ['critical' => 1]]]]);
+        $kernel = $this->kernel = new TestKernel(['exclude' => ['retry'], 'thresholds' => ['retry' => ['pending' => ['critical' => 1]]]]);
 
         $this->expectException(InvalidArgumentException::class);
         $this->expectExceptionMessage('Unknown transport "retry" configured in "messenger_stats.thresholds"');
 
-        $this->kernel->boot();
+        $kernel->boot();
     }
 
     /**
