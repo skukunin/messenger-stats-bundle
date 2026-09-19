@@ -1,8 +1,8 @@
 {
     "name": "skukunin/messenger-stats-bundle",
-    "description": "Queue statistics, health check and Prometheus metrics for Symfony Messenger transports",
+    "description": "Symfony bundle providing queue statistics, a health check and Prometheus metrics for Symfony Messenger transports",
     "type": "symfony-bundle",
-    "keywords": ["symfony", "messenger", "monitoring", "prometheus", "health-check"],
+    "keywords": ["symfony", "symfony-bundle", "bundle", "messenger", "monitoring", "prometheus", "health-check"],
     "license": "MIT",
     "authors": [
         {
@@ -29,7 +29,7 @@
     "require-dev": {
         "doctrine/doctrine-bundle": "^2.7",
         "friendsofphp/php-cs-fixer": "^3.40",
-        "phpro/grumphp": "^2.23",
+        "phpro/grumphp-shim": "^2.0",
         "phpstan/phpstan": "^1.12 || ^2.0",
         "phpstan/phpstan-phpunit": "^1.4 || ^2.0",
         "phpstan/phpstan-symfony": "^1.4 || ^2.0",
@@ -62,7 +62,7 @@
     "config": {
         "sort-packages": true,
         "allow-plugins": {
-            "phpro/grumphp": true
+            "phpro/grumphp-shim": true
         }
     },
     "minimum-stability": "stable",

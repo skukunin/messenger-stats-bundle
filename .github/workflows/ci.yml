@@ -15,7 +15,7 @@ jobs:
         env:
             SYMFONY_REQUIRE: 5.4.*
         steps:
-            - uses: actions/checkout@v4
+            - uses: actions/checkout@v7
 
             - uses: shivammathur/setup-php@v2
               with:
@@ -27,7 +27,7 @@ jobs:
                   composer global config --no-plugins allow-plugins.symfony/flex true
                   composer global require --no-progress --no-scripts --no-plugins symfony/flex
 
-            - uses: ramsey/composer-install@v3
+            - uses: ramsey/composer-install@v4
               with:
                   dependency-versions: lowest
 
@@ -43,7 +43,7 @@ jobs:
         env:
             SYMFONY_REQUIRE: 7.*
         steps:
-            - uses: actions/checkout@v4
+            - uses: actions/checkout@v7
 
             - uses: shivammathur/setup-php@v2
               with:
@@ -55,7 +55,7 @@ jobs:
                   composer global config --no-plugins allow-plugins.symfony/flex true
                   composer global require --no-progress --no-scripts --no-plugins symfony/flex
 
-            - uses: ramsey/composer-install@v3
+            - uses: ramsey/composer-install@v4
               with:
                   dependency-versions: highest
 
@@ -85,7 +85,7 @@ jobs:
                     --health-timeout=5s
                     --health-retries=10
         steps:
-            - uses: actions/checkout@v4
+            - uses: actions/checkout@v7
 
             - uses: shivammathur/setup-php@v2
               with:
@@ -98,7 +98,7 @@ jobs:
                   composer global config --no-plugins allow-plugins.symfony/flex true
                   composer global require --no-progress --no-scripts --no-plugins symfony/flex
 
-            - uses: ramsey/composer-install@v3
+            - uses: ramsey/composer-install@v4
               with:
                   dependency-versions: highest
 

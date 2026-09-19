@@ -1,7 +1,11 @@
-# Messenger Stats Bundle
+# Messenger Stats Bundle for Symfony
 
-Queue statistics, health check and Prometheus metrics for Symfony Messenger
-transports.
+[![CI](https://github.com/skukunin/messenger-stats-bundle/actions/workflows/ci.yml/badge.svg)](https://github.com/skukunin/messenger-stats-bundle/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+A **Symfony bundle** that adds queue statistics, a health check and Prometheus
+metrics for Symfony Messenger transports. Install it with Composer, register it
+in `config/bundles.php`, and it works with Symfony 5.4, 6.4 and 7.x on PHP 8.1+.
 
 The bundle reads the state of every Messenger transport configured in your
 application and exposes it four ways:
