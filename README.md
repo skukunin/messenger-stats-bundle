@@ -87,7 +87,18 @@ That is all. Transports are discovered from `framework.messenger.transports`.
 ## Security
 
 The bundle authenticates its own routes. You do not need a firewall entry in
-`security.yaml`, and you should not add one that covers the prefix.
+`security.yaml` for them. If a catch-all firewall in your application would
+otherwise demand a login or HTTP basic credentials on the prefix, give the
+prefix its own firewall with `security: false`, so the bearer token is the
+only check:
+
+```yaml
+security:
+    firewalls:
+        messenger_stats:
+            pattern: ^/_messenger/
+            security: false
+```
 
 - Every route requires `Authorization: Bearer <token>`. The comparison is
   constant-time.
@@ -303,6 +314,21 @@ Problems
 `--format=json` prints the same document as `/stats`. The exit code is `1`
 when the status is `critical`, which makes the command usable from cron on
 hosts without any HTTP monitoring.
+
+## Troubleshooting
+
+**`UnexpectedSessionUsageException: Session was used while the request was
+declared stateless.`** The bundle's routes are stateless, and something in
+your application reads or writes the session on every request, typically a
+`kernel.response` subscriber. In debug mode Symfony turns that into a 500.
+In production it only logs a warning, but every poll by a monitor then starts
+a session and sends a cookie. Skip stateless requests in that subscriber:
+
+```php
+if ($event->getRequest()->attributes->getBoolean('_stateless')) {
+    return;
+}
+```
 
 ## How it works
 
